@@ -21,28 +21,39 @@ def element_to_text(elem: etree._Element) -> str:
     if tag == "TABLE":
         return _table_to_markdown(elem)
 
-    # Build text by walking the element tree
-    parts: list[str] = []
+    # Build text by walking the element tree.
+    # Inline children (e.g. <I>, <E>) are accumulated and joined with spaces.
+    # Block children (e.g. nested <P>) flush the inline buffer first, then are
+    # separated with double-newlines so paragraph structure is preserved.
+    inline_parts: list[str] = []
+    block_parts: list[str] = []
 
     if elem.text:
-        parts.append(elem.text.strip())
+        inline_parts.append(elem.text.strip())
 
     for child in elem:
         child_tag = _local_name(child.tag)
         child_text = element_to_text(child)
 
         if child_tag in INLINE_TAGS:
-            # Inline: no newline separator
-            parts.append(child_text)
-        else:
-            # Block: separate with newline
             if child_text:
-                parts.append(child_text)
+                inline_parts.append(child_text)
+        else:
+            # Flush accumulated inline text as one block piece
+            if inline_parts:
+                block_parts.append(" ".join(p for p in inline_parts if p))
+                inline_parts = []
+            if child_text:
+                block_parts.append(child_text)
 
         if child.tail:
-            parts.append(child.tail.strip())
+            inline_parts.append(child.tail.strip())
 
-    return " ".join(p for p in parts if p)
+    # Flush any remaining inline text
+    if inline_parts:
+        block_parts.append(" ".join(p for p in inline_parts if p))
+
+    return "\n\n".join(p for p in block_parts if p)
 
 
 def _local_name(tag: str) -> str:

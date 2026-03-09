@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -24,7 +24,7 @@ def _get_or_create_session(session_id: str | None) -> tuple[str, dict]:
     sid = str(uuid.uuid4())
     _sessions[sid] = {
         "session_id": sid,
-        "created_at": datetime.utcnow().isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
         "messages": [],
     }
     return sid, _sessions[sid]
