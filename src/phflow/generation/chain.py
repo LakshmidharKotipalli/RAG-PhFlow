@@ -15,6 +15,7 @@ from phflow.generation.llm import LlamaCppClient
 from phflow.generation.prompts import build_correction_prompt, build_prompt, build_retrieval_query
 from phflow.retrieval.filters import build_filter
 from phflow.retrieval.hybrid import HybridRetriever
+from phflow.utils.query_logger import QueryLogger
 
 
 # Matches a bare CFR section header echo, e.g. "21 CFR § 117.3 — § 117.3 Definitions."
@@ -100,6 +101,8 @@ class RAGChain:
         Or an async iterator of token strings if stream=True.
         """
         history = conversation_history or []
+        qlog = QueryLogger(query)
+        qlog.log("ORIGINAL QUERY", query)
 
         # Correct spelling and rephrase colloquial input before retrieval.
         # If the correction call times out or fails, fall back to the original query.
@@ -110,8 +113,11 @@ class RAGChain:
         except Exception:
             clean_query = query
 
+        qlog.log("CORRECTED QUERY", clean_query)
+
         # Context-aware retrieval query (uses corrected query)
         retrieval_query = build_retrieval_query(history, clean_query)
+        qlog.log("RETRIEVAL QUERY (after history context)", retrieval_query)
 
         # Build metadata filter
         qdrant_filter = build_filter(
@@ -121,12 +127,23 @@ class RAGChain:
             exclude_removed=True,
         )
 
-        # Retrieve + rerank
+        # Retrieve + rerank (logs pre/post rerank inside search())
         sections = self.retriever.search(
             query=retrieval_query,
             qdrant_filter=qdrant_filter,
             expand_to_parent=expand_to_parent,
+            logger=qlog,
         )
+
+        qlog.log("SECTIONS PASSED TO LLM", [
+            {
+                "section_number": s.get("section_number", ""),
+                "section_title": s.get("section_title", ""),
+                "reranker_score": s.get("score", 0.0),
+                "full_text_chars": len(s.get("full_text", "")),
+            }
+            for s in sections
+        ])
 
         # Build prompt: instructions + history + context + corrected question
         context = format_context_block(sections)
@@ -136,11 +153,16 @@ class RAGChain:
             conversation_history=history,
         )
 
+        qlog.log("ASSEMBLED PROMPT", prompt)
+
         if stream:
+            qlog.save()
             return self.llm.stream(prompt)
 
         # Generate
         raw_answer = await self.llm.generate(prompt)
+        qlog.log("RAW LLM ANSWER", raw_answer)
+
         all_sources = source_summary(sections)
 
         # Parse declared sources and clean the answer
@@ -150,6 +172,12 @@ class RAGChain:
         if not answer or _BARE_HEADER_RE.match(answer.strip()):
             answer = _INSUFFICIENT
             used_sources = []
+
+        qlog.log("FINAL ANSWER", answer)
+        qlog.log("SOURCES DECLARED BY LLM", [
+            s.get("section_number", "") for s in used_sources
+        ])
+        qlog.save()
 
         return {
             "answer": answer,

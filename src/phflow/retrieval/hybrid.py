@@ -59,6 +59,7 @@ class HybridRetriever:
         qdrant_filter: Filter | None = None,
         expand_to_parent: bool = True,
         top_n: int | None = None,
+        logger=None,
     ) -> list[dict]:
         """
         Retrieve and rerank relevant sections for a query.
@@ -98,7 +99,19 @@ class HybridRetriever:
         candidates = response.points
 
         if not candidates:
+            if logger:
+                logger.log("RETRIEVAL (pre-rerank)", "No candidates returned from Qdrant.")
             return []
+
+        if logger:
+            logger.log("RETRIEVAL (pre-rerank)", [
+                {
+                    "section_number": c.payload.get("section_number", ""),
+                    "section_title": c.payload.get("section_title", ""),
+                    "rrf_score": round(c.score, 6),
+                }
+                for c in candidates
+            ])
 
         # Rerank candidates
         reranked = self.reranker.rerank(
@@ -107,6 +120,16 @@ class HybridRetriever:
             top_n=top_n or self.reranker_top_n,
             score_threshold=self.reranker_score_threshold,
         )
+
+        if logger:
+            logger.log("RERANKING (post-rerank)", [
+                {
+                    "section_number": c.payload.get("section_number", ""),
+                    "section_title": c.payload.get("section_title", ""),
+                    "reranker_score": round(c.score, 6),
+                }
+                for c in reranked
+            ])
 
         if not expand_to_parent:
             return [

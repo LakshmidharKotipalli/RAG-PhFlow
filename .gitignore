@@ -47,3 +47,4 @@ htmlcov/
 
 # Logs
 *.log
+query_logs/
