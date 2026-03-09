@@ -109,11 +109,15 @@
     label.textContent = `Sources (${sources.length})`;
     wrapper.appendChild(label);
 
-    sources.forEach((src) => {
+    sources.forEach((src, idx) => {
       const details = document.createElement('details');
       details.className = 'source-card';
 
       const summary = document.createElement('summary');
+
+      const idxSpan = document.createElement('span');
+      idxSpan.className = 'source-index';
+      idxSpan.textContent = `[SOURCE ${idx + 1}]`;
 
       const numSpan = document.createElement('span');
       numSpan.className = 'source-section-num';
@@ -123,6 +127,7 @@
       titleSpan.className = 'source-title';
       titleSpan.textContent = src.section_title || '';
 
+      summary.appendChild(idxSpan);
       summary.appendChild(numSpan);
       summary.appendChild(titleSpan);
       details.appendChild(summary);
