@@ -3,8 +3,10 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
+from qdrant_client.http.exceptions import ResponseHandlingException
 
 from phflow.api.dependencies import get_chain
 from phflow.api.schemas import ChatRequest, ChatResponse, SourceResult
@@ -38,16 +40,22 @@ async def _handle_chat(
     sid, session = _get_or_create_session(session_id)
     history = session["messages"]
 
-    result = await chain.run(
-        query=req.message,
-        mode=req.mode,
-        conversation_history=history,
-        part_number=req.filters.part_number,
-        chapter_number=req.filters.chapter_number,
-        amended_after=req.filters.amended_after,
-        expand_to_parent=True,
-        stream=False,
-    )
+    try:
+        result = await chain.run(
+            query=req.message,
+            mode=req.mode,
+            conversation_history=history,
+            part_number=req.filters.part_number,
+            chapter_number=req.filters.chapter_number,
+            amended_after=req.filters.amended_after,
+            expand_to_parent=True,
+            stream=False,
+        )
+    except (ResponseHandlingException, httpx.ConnectError):
+        raise HTTPException(
+            status_code=503,
+            detail="A backend service is unavailable. Ensure Qdrant (docker compose up -d) and llama-server are running.",
+        )
 
     # Update session history
     session["messages"].append({"role": "user", "content": req.message})
