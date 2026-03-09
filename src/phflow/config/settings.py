@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     # llama.cpp server (scheme is added automatically if missing)
     llama_cpp_url: str = "http://localhost:8080"
     llama_cpp_temperature: float = 0.1
-    llama_cpp_num_ctx: int = 32768   # -c / --ctx-size when launching server
+    llama_cpp_num_ctx: int = 65536   # -c / --ctx-size when launching server
     llama_cpp_max_tokens: int = 2048
 
     # Reranker
