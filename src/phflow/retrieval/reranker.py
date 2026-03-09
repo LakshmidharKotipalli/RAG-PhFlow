@@ -32,6 +32,13 @@ class Reranker:
                 model_name
             ).to(device)
 
+        # Ensure a pad token exists — required for batch inference.
+        # BERT-based models (bge-reranker-base) already have [PAD];
+        # decoder models (Qwen etc.) use EOS as fallback.
+        if self.tokenizer.pad_token is None:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
+        self.model.config.pad_token_id = self.tokenizer.pad_token_id
+
         self.model.train(False)
         self.device = device
         self.max_length = max_length
