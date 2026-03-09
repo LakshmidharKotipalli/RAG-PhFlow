@@ -1,0 +1,85 @@
+"""
+Cross-encoder reranking using Qwen3-Reranker-0.6B.
+
+Qwen3-Reranker uses a generative classification format:
+the model outputs "yes"/"no" tokens whose logits are used as relevance scores.
+"""
+
+from __future__ import annotations
+
+import torch
+from transformers import AutoModelForSequenceClassification, AutoTokenizer
+
+
+RERANKER_INSTRUCTION = (
+    "Given a regulatory query about FDA/CFR regulations, "
+    "retrieve relevant sections that directly answer the query."
+)
+
+
+class Reranker:
+    def __init__(
+        self,
+        model_name: str = "Qwen/Qwen3-Reranker-0.6B",
+        device: str = "cpu",
+        max_length: int = 512,
+    ) -> None:
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name, padding_side="left")
+        self.model = AutoModelForSequenceClassification.from_pretrained(
+            model_name,
+            torch_dtype=torch.float32,
+            trust_remote_code=True,
+        ).to(device)
+        self.model.train(False)
+        self.device = device
+        self.max_length = max_length
+
+        # Token IDs for "yes" / "no" classification
+        self.token_false_id = self.tokenizer.convert_tokens_to_ids("no")
+        self.token_true_id = self.tokenizer.convert_tokens_to_ids("yes")
+
+    def _format_input(self, query: str, passage: str) -> str:
+        return (
+            f"<|im_start|>system\n{RERANKER_INSTRUCTION}<|im_end|>\n"
+            f"<|im_start|>user\n"
+            f"<Instruct>: {RERANKER_INSTRUCTION}\n"
+            f"<Query>: {query}\n"
+            f"<Document>: {passage}"
+            f"<|im_end|>"
+        )
+
+    def rerank(
+        self,
+        query: str,
+        candidates: list,  # list of ScoredPoint from Qdrant
+        top_n: int = 5,
+    ) -> list:
+        """
+        Rerank candidate chunks by relevance to the query.
+        Returns top_n candidates sorted by reranker score (descending).
+        """
+        if not candidates:
+            return []
+
+        pairs = [
+            self._format_input(query, c.payload.get("chunk_text", ""))
+            for c in candidates
+        ]
+
+        with torch.no_grad():
+            inputs = self.tokenizer(
+                pairs,
+                padding=True,
+                truncation=True,
+                max_length=self.max_length,
+                return_tensors="pt",
+            ).to(self.device)
+
+            logits = self.model(**inputs).logits
+            # Softmax over [false_id, true_id] → relevance probability for "yes"
+            scores = torch.nn.functional.softmax(
+                logits[:, [self.token_false_id, self.token_true_id]], dim=-1
+            )[:, 1].tolist()
+
+        ranked = sorted(zip(scores, candidates), key=lambda x: x[0], reverse=True)
+        return [c for _, c in ranked[:top_n]]

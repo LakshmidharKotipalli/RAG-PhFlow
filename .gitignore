@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+.venv/
+venv/
+env/
+
+# Environment
+.env
+!.env.example
+
+# Data files (large — use Git LFS or store separately)
+data/ecfr-title-21/ECFR-title21.xml
+data/ecfr-title-21/versions-title-21.json
+
+# Qdrant local storage
+qdrant_storage/
+
+# Ollama models
+ollama_models/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# macOS
+.DS_Store
+
+# Claude Code local context
+.claude/
+
+# Test / coverage artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+.ruff_cache/
+
+# Logs
+*.log
