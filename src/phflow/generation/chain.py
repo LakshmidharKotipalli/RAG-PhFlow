@@ -10,14 +10,14 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 
 from phflow.generation.citations import format_context_block, format_citations_footer, source_summary
-from phflow.generation.llm import OllamaClient
+from phflow.generation.llm import LlamaCppClient
 from phflow.generation.prompts import build_prompt, build_retrieval_query
 from phflow.retrieval.filters import build_filter
 from phflow.retrieval.hybrid import HybridRetriever
 
 
 class RAGChain:
-    def __init__(self, retriever: HybridRetriever, llm: OllamaClient) -> None:
+    def __init__(self, retriever: HybridRetriever, llm: LlamaCppClient) -> None:
         self.retriever = retriever
         self.llm = llm
 

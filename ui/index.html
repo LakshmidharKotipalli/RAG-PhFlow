@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PhFlow — FDA Regulatory Assistant</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div id="app">
+    <header>
+      <div class="header-inner">
+        <span class="logo">PhFlow</span>
+        <span class="subtitle">FDA Title 21 CFR Regulatory Assistant</span>
+      </div>
+    </header>
+
+    <main id="chat-container">
+      <div id="messages">
+        <div class="message assistant">
+          <div class="bubble">
+            Ask me anything about FDA Title 21 CFR regulations — labeling, manufacturing,
+            food safety, drug standards, and more.
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <footer id="input-area">
+      <div class="input-inner">
+        <textarea
+          id="user-input"
+          placeholder="Ask about FDA regulations…"
+          rows="1"
+          autofocus
+        ></textarea>
+        <button id="send-btn" aria-label="Send">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+            <line x1="22" y1="2" x2="11" y2="13"></line>
+            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+          </svg>
+        </button>
+      </div>
+    </footer>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

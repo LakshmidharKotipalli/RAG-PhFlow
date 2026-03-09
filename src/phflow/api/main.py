@@ -12,6 +12,8 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from phflow.api.routers import chat, compliance, health, search
 from phflow.config.settings import settings
@@ -104,6 +106,12 @@ def create_app() -> FastAPI:
     app.include_router(search.router)
     app.include_router(chat.router)
     app.include_router(compliance.router)
+
+    app.mount("/static", StaticFiles(directory="ui/static"), name="static")
+
+    @app.get("/", include_in_schema=False)
+    async def serve_ui():
+        return FileResponse("ui/index.html")
 
     return app
 
