@@ -3,7 +3,7 @@ Hybrid search: dense + BM25 sparse retrieval fused with Reciprocal Rank Fusion (
 via Qdrant's native hybrid query API.
 
 Flow:
-  1. Encode query → dense vector (PubMedBERT) + sparse vector (BM25)
+  1. Encode query → dense vector (BGE, with instruction prefix) + sparse vector (BM25)
   2. Qdrant RRF fusion → top-K candidates
   3. Reranker → top-N sections
   4. Parent expansion → full section text for each top-N result
@@ -28,12 +28,12 @@ from phflow.retrieval.reranker import Reranker
 from phflow.vectorstore.client import scroll_by_node
 
 
-# Always restrict retrieval to substantive text chunks.
-# "authority" and "table" chunks are short and generic — they dominate
-# embeddings and BM25 even for unrelated queries, pushing relevant
-# paragraph text out of the candidate pool.
-_TEXT_ONLY = Filter(
-    must=[FieldCondition(key="chunk_type", match=MatchValue(value="text"))]
+# Exclude authority chunks (amendment history, statutory citations) which are
+# generic boilerplate and dominate BM25 for unrelated queries.
+# Tables are included: CFR tables contain critical compliance data
+# (pesticide tolerances, approved additives, nutrient values, etc.)
+_EXCLUDE_AUTHORITY = Filter(
+    must_not=[FieldCondition(key="chunk_type", match=MatchValue(value="authority"))]
 )
 
 
@@ -93,8 +93,8 @@ class HybridRetriever:
         dense_vec = self.encoder.encode_query(query)
         sparse_vec = self._encode_sparse(query)
 
-        # Merge caller filter with the mandatory text-only filter
-        search_filter = _merge_filters(qdrant_filter, _TEXT_ONLY)
+        # Merge caller filter with the authority-exclusion filter
+        search_filter = _merge_filters(qdrant_filter, _EXCLUDE_AUTHORITY)
 
         # Hybrid search via Qdrant native RRF
         prefetch_limit = self.initial_k * 2

@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     # Embedding
-    embedding_model: str = "NeuML/pubmedbert-base-embeddings"
+    embedding_model: str = "BAAI/bge-base-en-v1.5"
     embedding_device: str = "cpu"
     embedding_batch_size: int = 64
 
@@ -27,10 +27,9 @@ class Settings(BaseSettings):
     # Retrieval
     initial_retrieval_k: int = 40
     reranker_top_n: int = 5
-    reranker_score_threshold: float = 0.0  # 0 = no threshold; reranker orders, LLM decides relevance
+    reranker_score_threshold: float = 0.25  # minimum yes-probability to pass reranker filter
 
     # Chunking
-    chunk_target_tokens: int = 400
     chunk_max_tokens: int = 512
     # Data paths (relative to project root)
     xml_path: str = "data/ecfr-title-21/ECFR-title21.xml"

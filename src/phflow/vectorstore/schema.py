@@ -29,7 +29,7 @@ def create_collection(client: QdrantClient, collection_name: str, vector_size: i
         ),
         sparse_vectors_config={
             "bm25": SparseVectorParams(
-                index=SparseIndexParams(on_disk=False)
+                index=SparseIndexParams(on_disk=True)
             )
         },
     )

@@ -1,21 +1,25 @@
 """
-Sentence-transformer encoder wrapper for PubMedBERT embeddings.
+Sentence-transformer encoder wrapper for regulatory text embeddings.
 
-Model: NeuML/pubmedbert-base-embeddings
+Model: BAAI/bge-base-en-v1.5
   - 768-dim, 512-token context
-  - Symmetric similarity (no instruction prefix needed)
-  - Optimized for biomedical/pharmaceutical domain text
+  - Asymmetric: queries use an instruction prefix for better retrieval relevance
+  - Trained on broad English corpus; strong on factual/regulatory retrieval (BEIR benchmarks)
+  - Drop-in replacement for PubMedBERT — same 768-dim, no Qdrant schema change needed
 """
 
 from __future__ import annotations
 
 from sentence_transformers import SentenceTransformer
 
+# BGE instruction prefix for query-side encoding (improves retrieval alignment)
+_BGE_QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
+
 
 class RegulationEncoder:
     def __init__(
         self,
-        model_name: str = "NeuML/pubmedbert-base-embeddings",
+        model_name: str = "BAAI/bge-base-en-v1.5",
         device: str = "cpu",
         batch_size: int = 64,
     ) -> None:
@@ -24,7 +28,7 @@ class RegulationEncoder:
         self.embedding_dim = self.model.get_sentence_embedding_dimension()
 
     def encode_passages(self, texts: list[str], show_progress: bool = True) -> list[list[float]]:
-        """Encode a list of passage texts into normalized embedding vectors."""
+        """Encode passage texts (document side) — no prefix applied."""
         vectors = self.model.encode(
             texts,
             batch_size=self.batch_size,
@@ -35,9 +39,9 @@ class RegulationEncoder:
         return vectors.tolist()
 
     def encode_query(self, query: str) -> list[float]:
-        """Encode a single query string into a normalized embedding vector."""
+        """Encode a query string with BGE instruction prefix for asymmetric retrieval."""
         vector = self.model.encode(
-            query,
+            _BGE_QUERY_PREFIX + query,
             normalize_embeddings=True,
             convert_to_numpy=True,
         )

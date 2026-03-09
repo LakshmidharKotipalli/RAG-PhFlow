@@ -23,7 +23,7 @@ from tqdm import tqdm
 
 from phflow.config.settings import settings
 from phflow.embeddings.encoder import RegulationEncoder
-from phflow.ingestion.chunker import Chunk, build_parent_text, chunk_section
+from phflow.ingestion.chunker import Chunk, build_parent_text, chunk_section, count_tokens
 from phflow.ingestion.metadata import enrich_with_version, load_versions
 from phflow.ingestion.parser import SectionData, parse_sections
 from phflow.vectorstore.client import build_point, get_qdrant_client, upsert_batch
@@ -33,9 +33,7 @@ logger = logging.getLogger(__name__)
 
 
 def _build_payload(section: SectionData, chunk: Chunk, version_meta: dict, total_chunks: int) -> dict:
-    import tiktoken
-    tok = tiktoken.get_encoding("cl100k_base")
-    token_count = len(tok.encode(chunk.text))
+    token_count = count_tokens(chunk.text)
 
     return {
         # Section identity
@@ -62,6 +60,7 @@ def _build_payload(section: SectionData, chunk: Chunk, version_meta: dict, total
         # Chunk metadata
         "chunk_index": chunk.chunk_index,
         "chunk_type": chunk.chunk_type,
+        "paragraph_label": chunk.paragraph_label,
         "total_chunks": total_chunks,
         "has_table": section.has_table,
         "token_count": token_count,
@@ -153,7 +152,6 @@ def run_ingestion(
                 version_meta = enrich_with_version(section.section_number, versions)
                 chunks = chunk_section(
                     section,
-                    target_tokens=settings.chunk_target_tokens,
                     max_tokens=settings.chunk_max_tokens,
                 )
 
