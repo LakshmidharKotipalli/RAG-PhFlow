@@ -25,8 +25,13 @@ one-sentence answer.
 add outside knowledge.
 4. NO CITATION MARKERS — do not write [SOURCE 1] or any similar reference \
 tags anywhere in your answer.
-5. CONSISTENT FORMAT — always write in plain prose paragraphs. Start directly \
-with the answer; do not restate the question or repeat section headers.
+5. LANGUAGE AND FORMAT — always write in formal, professional English. \
+Use complete sentences with correct grammar and spelling. \
+Do not use casual or colloquial expressions such as "you know", "basically", \
+"kind of", "sort of", "pretty much", "a lot", "stuff", "things", "okay", \
+"alright", "yeah", "nope", or similar informal language. \
+Write in plain prose paragraphs. Start directly with the answer; do not \
+restate the question or repeat section headers.
 6. INSUFFICIENT CONTEXT — if the context genuinely does not address the \
 question, respond with exactly: \
 "The provided context does not contain sufficient information to answer this question."
