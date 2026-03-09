@@ -21,7 +21,7 @@ class Reranker:
     def __init__(
         self,
         model_name: str = "Qwen/Qwen3-Reranker-0.6B",
-        device: str = "cpu",
+        device: str = "cuda",
         max_length: int = 512,
     ) -> None:
         self.tokenizer = AutoTokenizer.from_pretrained(model_name, padding_side="left")
@@ -86,4 +86,4 @@ class Reranker:
             )[:, 1].tolist()
 
         ranked = sorted(zip(scores, candidates), key=lambda x: x[0], reverse=True)
-        return [c for _, c in ranked[:top_n]]
+        return [c for score, c in ranked[:top_n] if score >= 0.75]
