@@ -143,11 +143,6 @@ def parse_sections(xml_path: Path) -> Generator[SectionData, None, None]:
                     if frame in stack:
                         stack.remove(frame)
 
-                # Memory management: clear ancestor divs after processing their sections
-                # (DIV8s are processed before their parent DIV ends)
-                if tag in ("DIV5", "DIV6"):
-                    # Keep elem alive until after section processing — done via stack
-                    pass
 
             elif tag == "DIV8":
                 section = _build_section(elem, stack)

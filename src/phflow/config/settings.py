@@ -32,8 +32,6 @@ class Settings(BaseSettings):
     # Chunking
     chunk_target_tokens: int = 400
     chunk_max_tokens: int = 512
-    chunk_overlap_tokens: int = 50
-
     # Data paths (relative to project root)
     xml_path: str = "data/ecfr-title-21/ECFR-title21.xml"
     versions_path: str = "data/ecfr-title-21/versions-title-21.json"

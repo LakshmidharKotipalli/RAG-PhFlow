@@ -14,7 +14,7 @@ Execution order:
 from __future__ import annotations
 
 import logging
-from dataclasses import asdict
+
 from pathlib import Path
 
 from fastembed import SparseTextEmbedding

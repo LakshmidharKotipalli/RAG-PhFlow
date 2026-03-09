@@ -54,17 +54,11 @@ class ChatRequest(BaseModel):
     stream: bool = False
 
 
-class ChatMessage(BaseModel):
-    role: Literal["user", "assistant"]
-    content: str
-    sources: list[SourceResult] | None = None
-
 
 class ChatResponse(BaseModel):
     session_id: str
     answer: str
     sources: list[SourceResult]
-    citations_footer: str
     mode: str
 
 

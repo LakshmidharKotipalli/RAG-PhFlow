@@ -150,5 +150,4 @@ class RAGChain:
         return {
             "answer": answer,
             "sources": used_sources,
-            "citations_footer": "",
         }

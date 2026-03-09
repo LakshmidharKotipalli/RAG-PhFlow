@@ -11,7 +11,7 @@ from qdrant_client.http.exceptions import ResponseHandlingException
 from phflow.api.dependencies import get_chain
 from phflow.api.schemas import ChatRequest, ChatResponse, SourceResult
 from phflow.generation.chain import RAGChain
-from phflow.generation.citations import source_summary
+
 
 router = APIRouter(prefix="/api/v1", tags=["chat"])
 
@@ -79,7 +79,6 @@ async def _handle_chat(
         session_id=sid,
         answer=result["answer"],
         sources=sources,
-        citations_footer=result.get("citations_footer", ""),
         mode=req.mode,
     )
 

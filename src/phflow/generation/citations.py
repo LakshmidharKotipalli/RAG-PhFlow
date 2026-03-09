@@ -45,21 +45,6 @@ def format_context_block(sections: list[dict]) -> str:
     return "\n\n".join(parts)
 
 
-def format_citations_footer(sections: list[dict]) -> str:
-    """
-    Format a citations list for appending to assistant responses.
-    """
-    if not sections:
-        return ""
-    lines = ["CITATIONS:"]
-    for i, section in enumerate(sections, 1):
-        meta = section.get("metadata", {})
-        sn = meta.get("section_number", section.get("section_number", ""))
-        title = meta.get("section_title", section.get("section_title", ""))
-        date = meta.get("latest_amendment_date", "N/A")
-        lines.append(f"[{i}] 21 CFR {sn} — {title} (last amended: {date})")
-    return "\n".join(lines)
-
 
 def source_summary(sections: list[dict]) -> list[dict]:
     """
