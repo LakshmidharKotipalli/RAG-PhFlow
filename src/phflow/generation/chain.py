@@ -1,7 +1,7 @@
 """
 RAG chain: retrieve → rerank → generate.
 
-Wires together the HybridRetriever, prompt templates, and OllamaClient
+Wires together the HybridRetriever, prompt builder, and LlamaCppClient
 into a single end-to-end call.
 """
 
@@ -11,7 +11,7 @@ from collections.abc import AsyncIterator
 
 from phflow.generation.citations import format_context_block, source_summary
 from phflow.generation.llm import LlamaCppClient
-from phflow.generation.prompts import build_messages, build_retrieval_query
+from phflow.generation.prompts import build_prompt, build_retrieval_query
 from phflow.retrieval.filters import build_filter
 from phflow.retrieval.hybrid import HybridRetriever
 
@@ -43,7 +43,7 @@ class RAGChain:
         """
         history = conversation_history or []
 
-        # Context-aware retrieval query (uses conversation history for disambiguation)
+        # Context-aware retrieval query
         retrieval_query = build_retrieval_query(history, query)
 
         # Build metadata filter
@@ -61,19 +61,19 @@ class RAGChain:
             expand_to_parent=expand_to_parent,
         )
 
-        # Format context for LLM
+        # Build prompt: system instructions + history + context + question
         context = format_context_block(sections)
-        messages = build_messages(
+        prompt = build_prompt(
             context=context,
             question=query,
             conversation_history=history,
         )
 
         if stream:
-            return self.llm.stream(messages)
+            return self.llm.stream(prompt)
 
         # Generate
-        answer = await self.llm.generate(messages)
+        answer = await self.llm.generate(prompt)
         sources = source_summary(sections)
 
         return {

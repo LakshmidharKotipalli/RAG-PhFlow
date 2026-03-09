@@ -4,9 +4,9 @@ Async client for the llama.cpp HTTP server.
 Start the server with:
     llama-server -m /path/to/model.gguf -c 32768 --port 8080
 
-Uses the native POST /completion endpoint (stable across all llama.cpp
-versions). Messages are formatted into a ChatML prompt so instruction-tuned
-models receive properly structured input.
+Uses the native POST /completion endpoint with a plain-text labeled-section
+prompt that works with any instruction-tuned model regardless of its specific
+chat template (Llama-3, Mistral, Qwen, etc.).
 
 Streaming uses Server-Sent Events (SSE): each line is "data: {json}" with a
 "content" field; the final event has "stop": true.
@@ -43,31 +43,12 @@ class LlamaCppClient:
         self.max_tokens = max_tokens if max_tokens is not None else settings.llama_cpp_max_tokens
         self._client = httpx.AsyncClient(timeout=timeout)
 
-    @staticmethod
-    def _messages_to_prompt(messages: list[dict]) -> str:
-        """
-        Format a chat messages list into a ChatML prompt string.
-
-        ChatML is the standard format for instruction-tuned models
-        (Qwen, Llama-3, Mistral, etc.):
-            <|im_start|>system
-            ...
-            <|im_end|>
-            <|im_start|>user
-            ...
-            <|im_end|>
-            <|im_start|>assistant
-        """
-        prompt = ""
-        for msg in messages:
-            prompt += f"<|im_start|>{msg['role']}\n{msg['content']}<|im_end|>\n"
-        prompt += "<|im_start|>assistant\n"
-        return prompt
-
-    # Tokens that should never appear in the generated answer
+    # Tokens that must never appear in the generated answer
     _STOP_TOKENS = [
         "<|im_end|>", "<|im_start|>", "<|ir_end|>",
         "</s>", "<|endoftext|>", "<|eot_id|>",
+        "### INSTRUCTIONS", "### CONTEXT", "### QUESTION",
+        "### CONVERSATION",
     ]
 
     def _payload(self, prompt: str, stream: bool) -> dict:
@@ -97,9 +78,8 @@ class LlamaCppClient:
                     changed = True
         return result
 
-    async def generate(self, messages: list[dict]) -> str:
+    async def generate(self, prompt: str) -> str:
         """Generate a complete response (non-streaming)."""
-        prompt = self._messages_to_prompt(messages)
         resp = await self._client.post(
             f"{self.base_url}/completion",
             json=self._payload(prompt, stream=False),
@@ -107,9 +87,8 @@ class LlamaCppClient:
         resp.raise_for_status()
         return self._clean(resp.json().get("content", ""))
 
-    async def stream(self, messages: list[dict]) -> AsyncIterator[str]:
+    async def stream(self, prompt: str) -> AsyncIterator[str]:
         """Stream response tokens via SSE."""
-        prompt = self._messages_to_prompt(messages)
         async with self._client.stream(
             "POST",
             f"{self.base_url}/completion",
