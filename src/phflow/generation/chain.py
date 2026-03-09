@@ -7,6 +7,7 @@ into a single end-to-end call.
 
 from __future__ import annotations
 
+import re
 from collections.abc import AsyncIterator
 
 from phflow.generation.citations import format_context_block, source_summary
@@ -73,7 +74,9 @@ class RAGChain:
             return self.llm.stream(prompt)
 
         # Generate
-        answer = await self.llm.generate(prompt)
+        raw_answer = await self.llm.generate(prompt)
+        # Strip any [SOURCE N] markers the model may have included despite instructions
+        answer = re.sub(r"\[SOURCE\s*\d+\]", "", raw_answer).strip()
         sources = source_summary(sections)
 
         return {
