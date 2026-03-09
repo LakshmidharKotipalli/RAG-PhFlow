@@ -30,11 +30,12 @@ with the answer; do not restate the question or repeat section headers.
 6. INSUFFICIENT CONTEXT — if the context genuinely does not address the \
 question, respond with exactly: \
 "The provided context does not contain sufficient information to answer this question."
-7. DECLARE SOURCES — on the very last line of your response, and ONLY on that \
-line, write the numbers of the sources you actually drew information from, in \
-this exact format (no other text on that line):
+7. DECLARE SOURCES — this step is REQUIRED. After your answer, write a new line \
+containing ONLY the source numbers you actually used. Use this exact format:
 SOURCES_USED: 1, 3
-If you used no sources, write: SOURCES_USED: none"""
+Write only the numbers separated by commas. No other text on that line. \
+If you used no sources, write: SOURCES_USED: none
+This line MUST appear at the end of every response, no exceptions."""
 
 
 # Number of conversation turns (user + assistant pairs) to include

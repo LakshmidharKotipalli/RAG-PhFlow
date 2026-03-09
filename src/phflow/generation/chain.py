@@ -19,40 +19,43 @@ from phflow.retrieval.hybrid import HybridRetriever
 
 def _parse_used_sources(answer: str, all_sources: list[dict]) -> tuple[str, list[dict]]:
     """
-    Extract the SOURCES_USED declaration from the last line of the answer.
+    Find the SOURCES_USED declaration in the answer (scans bottom-up so it is
+    found even when the LLM adds trailing blank lines or puts it one line above
+    the last line).
 
     Returns:
         (clean_answer, used_sources)
-        - clean_answer: answer with the SOURCES_USED line stripped and any
+        - clean_answer: answer with the declaration line stripped and any
           residual [SOURCE N] markers removed
-        - used_sources: subset of all_sources that the model declared it used;
-          falls back to all_sources if the declaration is absent or malformed
+        - used_sources: subset of all_sources the model declared it used.
+          Defaults to [] (empty) if the declaration is absent — callers should
+          not fall back to showing everything when the LLM skips it.
     """
     lines = answer.strip().splitlines()
+    used_sources: list[dict] = []   # default: show nothing
+    declaration_line_idx: int | None = None
 
-    used_sources = all_sources  # default: show everything
-    last_line = lines[-1].strip() if lines else ""
+    # Scan from the bottom up to find the declaration
+    for i in range(len(lines) - 1, -1, -1):
+        m = re.match(r"SOURCES_USED:\s*(.+)", lines[i].strip(), re.IGNORECASE)
+        if m:
+            declaration_line_idx = i
+            declaration = m.group(1).strip()
+            if declaration.lower() != "none":
+                seen: set[int] = set()
+                for part in re.split(r"[,\s]+", declaration):
+                    if part.isdigit():
+                        idx = int(part) - 1   # 1-based in prompt → 0-based
+                        if 0 <= idx < len(all_sources) and idx not in seen:
+                            seen.add(idx)
+                            used_sources.append(all_sources[idx])
+            break
 
-    match = re.match(r"SOURCES_USED:\s*(.+)", last_line, re.IGNORECASE)
-    if match:
-        declaration = match.group(1).strip()
-        lines = lines[:-1]  # remove the declaration line
+    # Strip everything from the declaration line onwards
+    if declaration_line_idx is not None:
+        lines = lines[:declaration_line_idx]
 
-        if declaration.lower() != "none":
-            # Parse "1, 3, 5" → [0, 2, 4] (0-based indices)
-            indices = []
-            for part in re.split(r"[,\s]+", declaration):
-                if part.isdigit():
-                    idx = int(part) - 1  # sources are 1-based in the prompt
-                    if 0 <= idx < len(all_sources):
-                        indices.append(idx)
-            if indices:
-                seen = set()
-                used_sources = [
-                    all_sources[i] for i in indices if not (i in seen or seen.add(i))
-                ]
-
-    # Reassemble answer and strip any residual [SOURCE N] markers
+    # Reassemble and remove any residual [SOURCE N] markers
     clean = "\n".join(lines).strip()
     clean = re.sub(r"\[SOURCE\s*\d+\]", "", clean).strip()
     return clean, used_sources
