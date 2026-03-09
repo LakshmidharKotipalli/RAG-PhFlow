@@ -26,16 +26,20 @@ Do not guess, infer, or draw on training knowledge.
 3. PARTIAL CONTEXT — if the CONTEXT partially addresses the question, answer \
 from what is available and explicitly state what the context does not cover.
 
-4. ANSWER FORMAT — write in formal prose paragraphs. Cover all requirements, \
-conditions, and exceptions present in the context. Do not bullet-point, \
-do not restate the question, do not include section headers or bare CFR numbers \
-as your answer.
+4. LENGTHY CONTEXT — if the CONTEXT is long or covers many topics, distil it: \
+identify the information directly relevant to the question and summarise that \
+information concisely. Do not reproduce large blocks of regulatory text verbatim.
 
-5. CITATIONS — this step is REQUIRED. On the final line of every response, \
-list the source numbers you drew from, using this exact format:
+5. ANSWER FORMAT — write in formal prose paragraphs. Cover all requirements, \
+conditions, and exceptions relevant to the question. Do not bullet-point, \
+do not restate the question. Do not include CFR section numbers, section titles, \
+or source labels (e.g. "[SOURCE 1]") anywhere in your answer text.
+
+6. CITATIONS — THIS IS MANDATORY. Every response must end with a line listing \
+the source numbers you drew from. Use this exact format and nothing else:
 SOURCES_USED: 1, 3
-Use only the numbers separated by commas. If no source was used, write: SOURCES_USED: none
-This line must appear at the end of every response without exception."""
+Separate numbers with commas. If no source was used, write: SOURCES_USED: none
+This line MUST be the last line of every response. Omitting it is not permitted."""
 
 
 # Number of conversation turns (user + assistant pairs) to include
