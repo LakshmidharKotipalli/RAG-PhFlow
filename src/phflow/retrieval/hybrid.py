@@ -56,6 +56,7 @@ class HybridRetriever:
         query: str,
         qdrant_filter: Filter | None = None,
         expand_to_parent: bool = True,
+        top_n: int | None = None,
     ) -> list[dict]:
         """
         Retrieve and rerank relevant sections for a query.
@@ -98,7 +99,7 @@ class HybridRetriever:
             return []
 
         # Rerank candidates
-        reranked = self.reranker.rerank(query, candidates, top_n=self.reranker_top_n)
+        reranked = self.reranker.rerank(query, candidates, top_n=top_n or self.reranker_top_n)
 
         if not expand_to_parent:
             return [
@@ -123,13 +124,10 @@ class HybridRetriever:
                 continue
             seen_nodes.add(node)
 
-            if expand_to_parent:
-                siblings = scroll_by_node(self.qdrant, self.collection_name, node)
-                full_text = "\n\n".join(
-                    s.payload.get("chunk_text", "") for s in siblings
-                )
-            else:
-                full_text = chunk.payload.get("parent_text", chunk.payload.get("chunk_text", ""))
+            siblings = scroll_by_node(self.qdrant, self.collection_name, node)
+            full_text = "\n\n".join(
+                s.payload.get("chunk_text", "") for s in siblings
+            )
 
             results.append({
                 "section_number": chunk.payload.get("section_number", ""),

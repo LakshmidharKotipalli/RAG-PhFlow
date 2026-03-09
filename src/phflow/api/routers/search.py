@@ -29,17 +29,12 @@ async def search(
         exclude_removed=True,
     )
 
-    # Override retriever top_n temporarily for this request
-    original_top_n = retriever.reranker_top_n
-    retriever.reranker_top_n = req.top_k
-
     sections = retriever.search(
         query=req.query,
         qdrant_filter=qdrant_filter,
         expand_to_parent=req.expand_to_parent,
+        top_n=req.top_k,
     )
-
-    retriever.reranker_top_n = original_top_n
 
     elapsed_ms = (time.perf_counter() - start) * 1000
 

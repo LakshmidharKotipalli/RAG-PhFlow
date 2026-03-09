@@ -74,7 +74,10 @@ class LlamaCppClient:
             async for line in response.aiter_lines():
                 # llama.cpp SSE format: "data: {...}"
                 if line.startswith("data: "):
-                    data = json.loads(line[6:])
+                    try:
+                        data = json.loads(line[6:])
+                    except json.JSONDecodeError:
+                        continue
                     token = data.get("content", "")
                     if token:
                         yield token
