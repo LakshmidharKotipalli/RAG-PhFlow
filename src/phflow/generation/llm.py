@@ -64,6 +64,12 @@ class LlamaCppClient:
         prompt += "<|im_start|>assistant\n"
         return prompt
 
+    # Tokens that should never appear in the generated answer
+    _STOP_TOKENS = [
+        "<|im_end|>", "<|im_start|>", "<|ir_end|>",
+        "</s>", "<|endoftext|>", "<|eot_id|>",
+    ]
+
     def _payload(self, prompt: str, stream: bool) -> dict:
         return {
             "prompt": prompt,
@@ -72,8 +78,24 @@ class LlamaCppClient:
             "top_p": 0.9,
             "n_ctx": self.num_ctx,
             "stream": stream,
-            "stop": ["<|im_end|>", "<|im_start|>"],
+            "stop": self._STOP_TOKENS,
         }
+
+    @classmethod
+    def _clean(cls, text: str) -> str:
+        """Strip any leaked stop tokens from the start/end of generated text."""
+        result = text.strip()
+        changed = True
+        while changed:
+            changed = False
+            for token in cls._STOP_TOKENS:
+                if result.startswith(token):
+                    result = result[len(token):].strip()
+                    changed = True
+                if result.endswith(token):
+                    result = result[:-len(token)].strip()
+                    changed = True
+        return result
 
     async def generate(self, messages: list[dict]) -> str:
         """Generate a complete response (non-streaming)."""
@@ -83,7 +105,7 @@ class LlamaCppClient:
             json=self._payload(prompt, stream=False),
         )
         resp.raise_for_status()
-        return resp.json().get("content", "")
+        return self._clean(resp.json().get("content", ""))
 
     async def stream(self, messages: list[dict]) -> AsyncIterator[str]:
         """Stream response tokens via SSE."""
@@ -100,7 +122,7 @@ class LlamaCppClient:
                         data = json.loads(line[6:])
                     except json.JSONDecodeError:
                         continue
-                    token = data.get("content", "")
+                    token = self._clean(data.get("content", ""))
                     if token:
                         yield token
                     if data.get("stop", False):
