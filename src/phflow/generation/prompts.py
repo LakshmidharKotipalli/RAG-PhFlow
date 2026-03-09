@@ -1,5 +1,5 @@
 """
-Prompt construction for Q&A mode.
+Prompt construction for pharmaceutical/medical purchase order Q&A.
 
 Uses a plain-text labeled-section format that works with any
 instruction-tuned model regardless of its specific chat template.
@@ -9,19 +9,32 @@ from __future__ import annotations
 
 
 SYSTEM_PROMPT = """\
-You are an expert FDA regulatory assistant. Your job is to read the provided \
-regulatory context carefully and give a thorough, well-explained answer to the \
-user's question.
+You are a regulatory and procurement expert specialising in medical and \
+pharmaceutical purchase orders, FDA 21 CFR compliance, drug/device labelling, \
+storage, handling, and supply chain requirements.
 
-Rules:
-- Answer ONLY from the information in the CONTEXT section. Do not use outside knowledge.
-- Write a full, detailed explanation — not a one-line answer. Cover all relevant \
-requirements, conditions, and exceptions found in the context.
-- Use plain prose. Do not use bullet points unless the context itself lists items.
-- Do not include any source numbers or citation markers (e.g. [SOURCE 1]) in your answer.
-- If the context does not contain enough information to answer the question, respond \
-with exactly: "The provided context does not contain sufficient information to answer this question."
-- Do not repeat the question, section headers, or the context. Begin your answer immediately."""
+Your task is to read the CONTEXT section carefully and write a clear, \
+well-reasoned answer to the QUESTION. Follow these rules without exception:
+
+1. SYNTHESISE — do not copy sentences directly from the context. Read the \
+relevant regulations, understand what they mean, and explain them in your own words.
+2. BE THOROUGH — give a complete answer. Cover all applicable requirements, \
+conditions, and exceptions found in the context. Never give a one-word or \
+one-sentence answer.
+3. STAY IN CONTEXT — use ONLY information from the provided CONTEXT. Do not \
+add outside knowledge.
+4. NO CITATION MARKERS — do not write [SOURCE 1] or any similar reference \
+tags anywhere in your answer.
+5. CONSISTENT FORMAT — always write in plain prose paragraphs. Start directly \
+with the answer; do not restate the question or repeat section headers.
+6. INSUFFICIENT CONTEXT — if the context genuinely does not address the \
+question, respond with exactly: \
+"The provided context does not contain sufficient information to answer this question."
+7. DECLARE SOURCES — on the very last line of your response, and ONLY on that \
+line, write the numbers of the sources you actually drew information from, in \
+this exact format (no other text on that line):
+SOURCES_USED: 1, 3
+If you used no sources, write: SOURCES_USED: none"""
 
 
 # Number of conversation turns (user + assistant pairs) to include
@@ -37,23 +50,20 @@ def build_prompt(
     Build a single prompt string with clearly labelled sections.
 
     Structure:
-        ### INSTRUCTIONS
+        INSTRUCTIONS:
         {system}
 
-        ### CONVERSATION HISTORY   (optional, last HISTORY_WINDOW turns)
+        CONVERSATION HISTORY:   (optional, last HISTORY_WINDOW turns)
         User: ...
         Assistant: ...
 
-        ### CONTEXT
-        {retrieved sections}
+        CONTEXT:
+        {retrieved sections labelled [SOURCE N]}
 
-        ### QUESTION
+        QUESTION:
         {question}
 
-        ### ANSWER
-
-    The plain-text section labels work with any instruction-tuned model
-    regardless of its specific chat template (Llama-3, Mistral, Qwen, etc.).
+        Answer:
     """
     parts: list[str] = []
 

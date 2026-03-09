@@ -17,6 +17,47 @@ from phflow.retrieval.filters import build_filter
 from phflow.retrieval.hybrid import HybridRetriever
 
 
+def _parse_used_sources(answer: str, all_sources: list[dict]) -> tuple[str, list[dict]]:
+    """
+    Extract the SOURCES_USED declaration from the last line of the answer.
+
+    Returns:
+        (clean_answer, used_sources)
+        - clean_answer: answer with the SOURCES_USED line stripped and any
+          residual [SOURCE N] markers removed
+        - used_sources: subset of all_sources that the model declared it used;
+          falls back to all_sources if the declaration is absent or malformed
+    """
+    lines = answer.strip().splitlines()
+
+    used_sources = all_sources  # default: show everything
+    last_line = lines[-1].strip() if lines else ""
+
+    match = re.match(r"SOURCES_USED:\s*(.+)", last_line, re.IGNORECASE)
+    if match:
+        declaration = match.group(1).strip()
+        lines = lines[:-1]  # remove the declaration line
+
+        if declaration.lower() != "none":
+            # Parse "1, 3, 5" → [0, 2, 4] (0-based indices)
+            indices = []
+            for part in re.split(r"[,\s]+", declaration):
+                if part.isdigit():
+                    idx = int(part) - 1  # sources are 1-based in the prompt
+                    if 0 <= idx < len(all_sources):
+                        indices.append(idx)
+            if indices:
+                seen = set()
+                used_sources = [
+                    all_sources[i] for i in indices if not (i in seen or seen.add(i))
+                ]
+
+    # Reassemble answer and strip any residual [SOURCE N] markers
+    clean = "\n".join(lines).strip()
+    clean = re.sub(r"\[SOURCE\s*\d+\]", "", clean).strip()
+    return clean, used_sources
+
+
 class RAGChain:
     def __init__(self, retriever: HybridRetriever, llm: LlamaCppClient) -> None:
         self.retriever = retriever
@@ -38,7 +79,7 @@ class RAGChain:
 
         Returns a dict with keys:
           - answer: str
-          - sources: list[dict]
+          - sources: list[dict]  (only sources the model declared it used)
           - citations_footer: str
         Or an async iterator of token strings if stream=True.
         """
@@ -62,7 +103,7 @@ class RAGChain:
             expand_to_parent=expand_to_parent,
         )
 
-        # Build prompt: system instructions + history + context + question
+        # Build prompt: instructions + history + context + question
         context = format_context_block(sections)
         prompt = build_prompt(
             context=context,
@@ -75,12 +116,13 @@ class RAGChain:
 
         # Generate
         raw_answer = await self.llm.generate(prompt)
-        # Strip any [SOURCE N] markers the model may have included despite instructions
-        answer = re.sub(r"\[SOURCE\s*\d+\]", "", raw_answer).strip()
-        sources = source_summary(sections)
+        all_sources = source_summary(sections)
+
+        # Parse declared sources and clean the answer
+        answer, used_sources = _parse_used_sources(raw_answer, all_sources)
 
         return {
             "answer": answer,
-            "sources": sources,
+            "sources": used_sources,
             "citations_footer": "",
         }
