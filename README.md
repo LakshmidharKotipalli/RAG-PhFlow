@@ -1,13 +1,8 @@
 # PhFlow — FDA Regulatory Intelligence
 
-A multi-purpose RAG (Retrieval-Augmented Generation) application for querying, analyzing, and reasoning over **Title 21 of the Code of Federal Regulations (FDA — Food and Drugs)**.
+A RAG (Retrieval-Augmented Generation) application for querying and reasoning over **Title 21 of the Code of Federal Regulations (FDA — Food and Drugs)**.
 
-Supports three use cases out of the box:
-- **Q&A** — Answer natural-language questions with cited CFR sections
-- **Compliance Check** — Evaluate a product/process scenario against applicable regulations
-- **Research** — Synthesize regulatory summaries across multiple sections
-
-**Fully local stack** — no external APIs required.
+Ask natural-language questions and get answers cited to specific CFR sections — fully local, no external APIs required.
 
 ---
 
@@ -15,9 +10,10 @@ Supports three use cases out of the box:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                         User / Chainlit UI                      │
+│              Browser  (http://localhost:8000)                    │
+│              Vanilla JS single-page Q&A interface               │
 └────────────────────────────┬────────────────────────────────────┘
-                             │ HTTP
+                             │ HTTP / JSON
 ┌────────────────────────────▼────────────────────────────────────┐
 │                     FastAPI (port 8000)                         │
 │   /chat   /search   /compliance/check   /sections   /health     │
@@ -53,13 +49,13 @@ Supports three use cases out of the box:
 
 | Component | Technology |
 |---|---|
+| UI | Vanilla HTML/CSS/JS (served by FastAPI) |
 | Embedding | `NeuML/pubmedbert-base-embeddings` (768-dim) |
 | Sparse search | `fastembed` — `Qdrant/bm25` |
 | Vector DB | Qdrant (hybrid dense + sparse, HNSW) |
 | Reranker | `Qwen/Qwen3-Reranker-0.6B` |
 | LLM | llama.cpp server (any GGUF model) |
 | API | FastAPI + uvicorn |
-| UI | Chainlit |
 
 ---
 
@@ -71,6 +67,8 @@ Source: `data/ecfr-title-21/ECFR-title21.xml`
 - Hierarchy: Title → Chapter → Subchapter → Part → Subpart → Section
 - Supporting file: `data/ecfr-title-21/versions-title-21.json` (amendment history)
 
+> **Note:** The XML and JSON data files are not included in this repository due to size. Download them from the [eCFR bulk data site](https://www.ecfr.gov/current/title-21) and place them in `data/ecfr-title-21/`.
+
 ---
 
 ## Project Structure
@@ -80,7 +78,7 @@ RAG-PhFlow/
 ├── pyproject.toml
 ├── .env                          # local config (copy from .env.example)
 ├── docker-compose.yml            # Qdrant service
-├── data/ecfr-title-21/           # source XML + metadata
+├── data/ecfr-title-21/           # source XML + metadata (not in repo)
 │
 ├── src/phflow/
 │   ├── config/settings.py        # Pydantic BaseSettings
@@ -104,7 +102,7 @@ RAG-PhFlow/
 │   │   ├── citations.py          # CFR citation formatting
 │   │   └── chain.py              # RAG chain
 │   └── api/
-│       ├── main.py               # FastAPI app factory + lifespan
+│       ├── main.py               # FastAPI app factory + lifespan + static file serving
 │       ├── schemas.py            # Pydantic request/response models
 │       ├── dependencies.py       # FastAPI Depends injectors
 │       └── routers/              # health.py, search.py, chat.py, compliance.py
@@ -115,7 +113,11 @@ RAG-PhFlow/
 ├── tests/
 │   ├── unit/                     # test_chunker.py, test_cleaner.py
 │   └── integration/
-└── ui/app.py                     # Chainlit frontend
+└── ui/
+    ├── index.html                # single-page Q&A app
+    └── static/
+        ├── style.css
+        └── app.js
 ```
 
 ---
@@ -133,9 +135,6 @@ RAG-PhFlow/
 
 ```bash
 pip install -e ".[ingestion,api]"
-
-# Optional: UI
-pip install -e ".[ui]"
 ```
 
 ### 2. Start Qdrant
@@ -149,7 +148,6 @@ Qdrant dashboard: http://localhost:6333/dashboard
 ### 3. Start llama.cpp server
 
 ```bash
-# Download a GGUF model from HuggingFace, then:
 llama-server -m /path/to/Llama-3.1-8B-Instruct-Q4_K_M.gguf \
              -c 32768 \
              --port 8080
@@ -161,7 +159,7 @@ curl http://localhost:8080/health
 Recommended models (from [bartowski on HuggingFace](https://huggingface.co/bartowski)):
 - `Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf` — best balance of speed/quality
 - `Mistral-7B-Instruct-v0.3-Q4_K_M.gguf` — faster, lower memory
-- `Meta-Llama-3.1-70B-Instruct-Q4_K_M.gguf` — highest quality (requires ~40GB RAM)
+- `Meta-Llama-3.1-70B-Instruct-Q4_K_M.gguf` — highest quality (requires ~40 GB RAM)
 
 ### 4. Configure environment
 
@@ -173,28 +171,22 @@ cp .env.example .env
 ### 5. Run ingestion
 
 ```bash
-# First time (creates collection and indexes ~50K chunks):
+# First time — creates collection and indexes ~50K chunks (~25 min on CPU):
 python scripts/ingest.py --reset
 
 # Verify:
 python scripts/verify_collection.py
 ```
 
-Estimated time: ~25 minutes on CPU, ~4 minutes with GPU.
-
-### 6. Start the API
+### 6. Start the API + UI
 
 ```bash
 uvicorn phflow.api.main:app --reload --port 8000
 ```
 
-API docs: http://localhost:8000/docs
+Open **http://localhost:8000** — the Q&A interface loads in your browser.
 
-### 7. Start the UI (optional)
-
-```bash
-chainlit run ui/app.py
-```
+API docs (Swagger): http://localhost:8000/docs
 
 ---
 
@@ -216,6 +208,36 @@ GET /health
 }
 ```
 
+### Chat (Q&A)
+
+```
+POST /api/v1/chat
+```
+```json
+{
+  "message": "What are the GMPs for food manufacturing?",
+  "mode": "qa",
+  "filters": {"part_number": 110},
+  "stream": false
+}
+```
+
+Response:
+```json
+{
+  "session_id": "uuid",
+  "answer": "...",
+  "sources": [{"section_number": "§ 110.10", "section_title": "...", "full_text": "..."}],
+  "citations_footer": "...",
+  "mode": "qa"
+}
+```
+
+**Continue a session:**
+```
+POST /api/v1/chat/{session_id}/message
+```
+
 ### Search (retrieval only)
 
 ```
@@ -229,26 +251,6 @@ POST /api/v1/search
   "expand_to_parent": true
 }
 ```
-
-### Chat (Q&A)
-
-```
-POST /api/v1/chat
-```
-```json
-{
-  "message": "What are the GMPs for food manufacturing?",
-  "mode": "qa",
-  "filters": {"part_number": 110}
-}
-```
-
-**Continue a session:**
-```
-POST /api/v1/chat/{session_id}/message
-```
-
-**Modes:** `"qa"` | `"compliance"` | `"research"`
 
 ### Compliance Check
 
