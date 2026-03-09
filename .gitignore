@@ -14,7 +14,6 @@ venv/
 env/
 
 # Environment
-.env
 !.env.example
 
 # Data files (large — use Git LFS or store separately)
