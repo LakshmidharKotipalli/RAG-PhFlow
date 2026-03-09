@@ -24,14 +24,31 @@ class Reranker:
         device: str = "cuda",
         max_length: int = 512,
     ) -> None:
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name, padding_side="left")
+        # Load with local_files_only=True when model is already cached.
+        # This skips the HuggingFace hub check that writes a .no_exist sentinel
+        # file on every startup, which triggers uvicorn's --reload loop.
+        # Falls back to a full download on first run.
+        try:
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                model_name, padding_side="left", local_files_only=True
+            )
+            self.model = AutoModelForCausalLM.from_pretrained(
+                model_name,
+                dtype=torch.float32,
+                trust_remote_code=True,
+                local_files_only=True,
+            ).to(device)
+        except OSError:
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                model_name, padding_side="left"
+            )
+            self.model = AutoModelForCausalLM.from_pretrained(
+                model_name,
+                dtype=torch.float32,
+                trust_remote_code=True,
+            ).to(device)
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
-        self.model = AutoModelForCausalLM.from_pretrained(
-            model_name,
-            dtype=torch.float32,
-            trust_remote_code=True,
-        ).to(device)
         self.model.config.pad_token_id = self.tokenizer.pad_token_id
         self.model.train(False)  # inference mode: disables dropout
         self.device = device
