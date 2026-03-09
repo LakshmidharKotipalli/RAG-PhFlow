@@ -13,6 +13,14 @@ from phflow.vectorstore.client import scroll_by_node
 router = APIRouter(prefix="/api/v1", tags=["search"])
 
 
+def _confidence_label(score: float) -> str:
+    if score >= 0.70:
+        return "high"
+    if score >= 0.40:
+        return "medium"
+    return "low"
+
+
 @router.post("/search", response_model=SearchResponse)
 async def search(
     req: SearchRequest,
@@ -46,7 +54,8 @@ async def search(
             part_number=s.get("metadata", {}).get("part_number"),
             part_name=s.get("metadata", {}).get("part_name", ""),
             latest_amendment_date=s.get("metadata", {}).get("latest_amendment_date", ""),
-            score=s.get("score", 0.0),
+            confidence=s.get("score", 0.0),
+            confidence_label=_confidence_label(s.get("score", 0.0)),
             full_text=s.get("full_text", ""),
         )
         for s in sections

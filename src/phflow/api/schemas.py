@@ -18,7 +18,8 @@ class SourceResult(BaseModel):
     part_number: int | None = None
     part_name: str = ""
     latest_amendment_date: str = ""
-    score: float
+    confidence: float
+    confidence_label: str   # "high" | "medium" | "low"
     full_text: str
 
 

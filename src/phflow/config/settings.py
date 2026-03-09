@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     llama_cpp_max_tokens: int = 2048
 
     # Reranker
-    reranker_model: str = "Qwen/Qwen3-Reranker-0.6B"
+    reranker_model: str = "BAAI/bge-reranker-base"
 
     # Retrieval
     initial_retrieval_k: int = 40

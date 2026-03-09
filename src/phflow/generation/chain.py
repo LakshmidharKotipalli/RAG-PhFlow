@@ -133,7 +133,7 @@ class RAGChain:
             {
                 "section_number": s.get("section_number", ""),
                 "section_title": s.get("section_title", ""),
-                "reranker_score": s.get("score", 0.0),
+                "confidence": s.get("score", 0.0),
                 "full_text_chars": len(s.get("full_text", "")),
             }
             for s in sections

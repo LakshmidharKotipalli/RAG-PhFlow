@@ -9,6 +9,7 @@ from fastapi.responses import StreamingResponse
 from qdrant_client.http.exceptions import ResponseHandlingException
 
 from phflow.api.dependencies import get_chain
+from phflow.api.routers.search import _confidence_label
 from phflow.api.schemas import ChatRequest, ChatResponse, SourceResult
 from phflow.generation.chain import RAGChain
 
@@ -78,7 +79,8 @@ async def _handle_chat(
             part_number=s.get("part_number"),
             part_name=s.get("part_name", ""),
             latest_amendment_date=s.get("latest_amendment_date", ""),
-            score=s.get("score", 0.0),
+            confidence=s.get("score", 0.0),
+            confidence_label=_confidence_label(s.get("score", 0.0)),
             full_text=s.get("full_text", ""),
         )
         for s in result.get("sources", [])
