@@ -17,7 +17,6 @@ from qdrant_client.models import (
     Filter,
     Fusion,
     FusionQuery,
-    NamedSparseVector,
     Prefetch,
     SparseVector,
 )
@@ -83,7 +82,7 @@ class HybridRetriever:
                     filter=qdrant_filter,
                 ),
                 Prefetch(
-                    query=NamedSparseVector(name="bm25", vector=sparse_vec),
+                    query=sparse_vec,
                     using="bm25",
                     limit=prefetch_limit,
                     filter=qdrant_filter,
