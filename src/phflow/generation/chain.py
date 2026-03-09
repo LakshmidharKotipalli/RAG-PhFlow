@@ -12,7 +12,7 @@ from collections.abc import AsyncIterator
 
 from phflow.generation.citations import format_context_block, source_summary
 from phflow.generation.llm import LlamaCppClient
-from phflow.generation.prompts import build_correction_prompt, build_prompt, build_retrieval_query
+from phflow.generation.prompts import build_prompt, build_retrieval_query
 from phflow.retrieval.filters import build_filter
 from phflow.retrieval.hybrid import HybridRetriever
 from phflow.utils.query_logger import QueryLogger
@@ -104,18 +104,12 @@ class RAGChain:
         qlog = QueryLogger(query)
         qlog.log("ORIGINAL QUERY", query)
 
-        # Correct spelling and rephrase colloquial input before retrieval.
-        # If the correction call times out or fails, fall back to the original query.
-        try:
-            correction_prompt = build_correction_prompt(query)
-            corrected = await self.llm.correct_query(correction_prompt)
-            clean_query = corrected if corrected else query
-        except Exception:
-            clean_query = query
+        # Use the query as-is — a separate LLM correction pass was removed
+        # because it doubled latency (full inference round-trip before retrieval).
+        # The system prompt instructs the main LLM to handle informal phrasing.
+        clean_query = query
 
-        qlog.log("CORRECTED QUERY", clean_query)
-
-        # Context-aware retrieval query (uses corrected query)
+        # Context-aware retrieval query (prepends last turn for disambiguation)
         retrieval_query = build_retrieval_query(history, clean_query)
         qlog.log("RETRIEVAL QUERY (after history context)", retrieval_query)
 

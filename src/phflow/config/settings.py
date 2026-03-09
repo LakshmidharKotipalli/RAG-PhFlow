@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     reranker_model: str = "Qwen/Qwen3-Reranker-0.6B"
 
     # Retrieval
-    initial_retrieval_k: int = 20
+    initial_retrieval_k: int = 10
     reranker_top_n: int = 5
     reranker_score_threshold: float = 0.5  # min yes-probability to pass to LLM
 
