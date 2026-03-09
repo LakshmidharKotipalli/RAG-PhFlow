@@ -77,6 +77,11 @@ class RAGChain:
         citations = format_citations_footer(sections)
         sources = source_summary(sections)
 
+        # Always append the citations block so sources appear even if the
+        # LLM omits them from its inline text.
+        if citations:
+            answer = f"{answer.rstrip()}\n\n{citations}"
+
         return {
             "answer": answer,
             "sources": sources,
