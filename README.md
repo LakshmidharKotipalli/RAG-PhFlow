@@ -29,18 +29,18 @@ Ask natural-language questions and get synthesised, well-explained answers groun
 ┌──────────────────────────────────────────────────────────────────┐
 │                    Hybrid Retrieval                              │
 │                                                                  │
-│  Query ──► PubMedBERT embed ──► Dense vector ─────┐             │
-│        ──► BM25 (fastembed)  ──► Sparse vector ───┤  RRF Fusion │
-│                          (text chunks only)        └──► Qdrant  │
-│                                     Qwen3-Reranker-0.6B ──► top-5│
-│                                     Parent expansion ──► LLM   │
+│  Query ──► BGE embed (w/ prefix) ──► Dense vector ────┐         │
+│        ──► BM25 (fastembed)      ──► Sparse vector ───┤  RRF    │
+│                       (text + table chunks)            └►Qdrant  │
+│                                     Qwen3-Reranker-0.6B ──►top-5│
+│                                     Parent expansion ──► LLM    │
 └──────────────────────────────────────────────────────────────────┘
     │
     ▼
 ┌─────────────────────────────────┐
 │   Qdrant  (port 6333)           │
 │   Collection: ecfr_title21      │
-│   ~50,000 chunks (DIV8 sections)│
+│   ~50,000 structural chunks     │
 │   Dense 768-dim + BM25 sparse   │
 └─────────────────────────────────┘
 ```
@@ -50,9 +50,9 @@ Ask natural-language questions and get synthesised, well-explained answers groun
 | Component | Technology |
 |---|---|
 | UI | Vanilla HTML/CSS/JS (served by FastAPI) |
-| Embedding | `NeuML/pubmedbert-base-embeddings` (768-dim) |
+| Embedding | `BAAI/bge-base-en-v1.5` (768-dim, asymmetric query prefix) |
 | Sparse search | `fastembed` — `Qdrant/bm25` |
-| Vector DB | Qdrant (hybrid dense + sparse, HNSW) |
+| Vector DB | Qdrant (hybrid dense + sparse, HNSW, on-disk BM25) |
 | Reranker | `Qwen/Qwen3-Reranker-0.6B` |
 | LLM | llama.cpp server (any GGUF model) |
 | API | FastAPI + uvicorn |
@@ -63,7 +63,7 @@ Ask natural-language questions and get synthesised, well-explained answers groun
 
 Source: `data/ecfr-title-21/ECFR-title21.xml`
 - 21.7 MB, 244,264 lines
-- ~16,828 regulatory sections (DIV8 elements)
+- ~16,828 regulatory sections (DIV8 elements), ~1,145 embedded tables
 - Hierarchy: Title → Chapter → Subchapter → Part → Subpart → Section
 - Supporting file: `data/ecfr-title-21/versions-title-21.json` (amendment history)
 
@@ -86,10 +86,10 @@ RAG-PhFlow/
 │   ├── ingestion/
 │   │   ├── parser.py             # lxml.iterparse streaming XML parser
 │   │   ├── cleaner.py            # text extraction, table → markdown
-│   │   ├── chunker.py            # paragraph-boundary chunker (parent-child model)
+│   │   ├── chunker.py            # structural chunker (one chunk per top-level CFR paragraph)
 │   │   ├── metadata.py           # versions.json enrichment
 │   │   └── pipeline.py           # ingestion orchestrator
-│   ├── embeddings/encoder.py     # PubMedBERT sentence-transformer wrapper
+│   ├── embeddings/encoder.py     # BGE sentence-transformer wrapper (asymmetric encode_query)
 │   ├── vectorstore/
 │   │   ├── client.py             # Qdrant client + upsert helpers
 │   │   └── schema.py             # collection + payload index setup
@@ -276,29 +276,45 @@ GET /api/v1/parts
 
 ## RAG Pipeline
 
+### Chunking
+
+Each CFR section is split into **structural chunks** — one chunk per top-level paragraph label:
+
+```
+§ 101.9  Nutrition labeling of food
+  ├── intro chunk    (text before first (a))
+  ├── chunk (a)      [(a) + all (a)(1)(i)(ii)... sub-paragraphs]
+  ├── chunk (b)      [(b) + all (b)(1)(2)... sub-paragraphs]
+  ├── chunk (c)      [...]
+  ├── table chunk    [pipe-delimited markdown, chunk_type="table"]
+  └── authority chunk [AUTH/SOURCE — excluded from retrieval]
+```
+
+The full section text is stored in the `parent_text` payload field (not embedded) and fetched during parent expansion.
+
 ### Retrieval
 
 ```
 User query
   │
-  ├─► PubMedBERT encode ──────────────────────────────────┐
-  │                                                        │
-  └─► fastembed BM25 encode ─────────────────────────────►│
-                              (text chunks only)           │
+  ├─► BGE encode (instruction prefix) ──────────────────────────┐
+  │                                                              │
+  └─► fastembed BM25 encode ────────────────────────────────────►│
+                              (text + table chunks)              │
                                               Qdrant RRF Fusion
                                               (top-80 dense + top-80 sparse)
-                                                           │
-                                                 top-40 candidates
-                                                           │
-                                           Qwen3-Reranker-0.6B
-                                           (yes/no logit scoring)
-                                                           │
-                                                     top-5 sections
-                                                           │
-                                             Parent expansion
-                                             (fetch full section text)
-                                                           │
-                                                 LLM generation
+                                                                 │
+                                                    top-40 candidates
+                                                                 │
+                                            Qwen3-Reranker-0.6B
+                                            (yes/no logit, threshold=0.25)
+                                                                 │
+                                                      top-5 sections
+                                                                 │
+                                              Parent expansion
+                                              (fetch full section text)
+                                                                 │
+                                                  LLM generation
 ```
 
 ### Generation
@@ -329,7 +345,7 @@ All settings are in `.env` (see `.env.example`):
 
 | Variable | Default | Description |
 |---|---|---|
-| `EMBEDDING_MODEL` | `NeuML/pubmedbert-base-embeddings` | Sentence-transformer model |
+| `EMBEDDING_MODEL` | `BAAI/bge-base-en-v1.5` | Sentence-transformer model |
 | `EMBEDDING_DEVICE` | `cuda` | `cpu`, `cuda`, or `mps` |
 | `QDRANT_URL` | `http://localhost:6333` | Qdrant server URL |
 | `COLLECTION_NAME` | `ecfr_title21` | Qdrant collection |
@@ -338,11 +354,10 @@ All settings are in `.env` (see `.env.example`):
 | `LLAMA_CPP_NUM_CTX` | `65536` | Context window — must match `-c` on llama-server |
 | `LLAMA_CPP_MAX_TOKENS` | `2048` | Max response tokens |
 | `RERANKER_MODEL` | `Qwen/Qwen3-Reranker-0.6B` | Cross-encoder reranker |
-| `INITIAL_RETRIEVAL_K` | `40` | Candidates before reranking |
+| `INITIAL_RETRIEVAL_K` | `20` | Candidates before reranking |
 | `RERANKER_TOP_N` | `5` | Sections passed to LLM |
-| `RERANKER_SCORE_THRESHOLD` | `0.0` | Min reranker probability (0 = no filter) |
-| `CHUNK_TARGET_TOKENS` | `400` | Target chunk size |
-| `CHUNK_MAX_TOKENS` | `512` | Maximum chunk size |
+| `RERANKER_SCORE_THRESHOLD` | `0.25` | Min reranker yes-probability (filters weak matches) |
+| `CHUNK_MAX_TOKENS` | `512` | Overflow guard for structural chunking |
 
 ---
 
