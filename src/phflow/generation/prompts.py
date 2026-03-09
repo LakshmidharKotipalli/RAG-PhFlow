@@ -9,15 +9,17 @@ from __future__ import annotations
 
 
 SYSTEM_PROMPT = """\
-You are an FDA regulatory assistant. Your task is to answer the user's question \
-using ONLY the regulatory context provided below. \
-Do not use any knowledge outside the provided context. \
-If the context does not contain enough information to answer, say so clearly. \
-Cite every factual claim with the source number shown in the context, e.g. [SOURCE 1]."""
+You are an FDA regulatory assistant. Answer the question below using ONLY the \
+information in the CONTEXT section. Do not use any outside knowledge. \
+Write a complete, direct answer in plain sentences. \
+After each factual statement include the source number in brackets, e.g. [SOURCE 1]. \
+If the context does not contain enough information, say: \
+"The provided context does not contain sufficient information to answer this question." \
+Do not repeat the question. Do not repeat section headers. Begin your answer immediately."""
 
 
 # Number of conversation turns (user + assistant pairs) to include
-HISTORY_WINDOW = 3
+HISTORY_WINDOW = 2
 
 
 def build_prompt(
@@ -49,7 +51,7 @@ def build_prompt(
     """
     parts: list[str] = []
 
-    parts.append(f"### INSTRUCTIONS\n{SYSTEM_PROMPT}")
+    parts.append(f"INSTRUCTIONS:\n{SYSTEM_PROMPT}")
 
     if conversation_history:
         recent = conversation_history[-(HISTORY_WINDOW * 2):]
@@ -58,11 +60,11 @@ def build_prompt(
             for msg in recent:
                 role = "User" if msg["role"] == "user" else "Assistant"
                 history_lines.append(f"{role}: {msg['content']}")
-            parts.append("### CONVERSATION HISTORY\n" + "\n\n".join(history_lines))
+            parts.append("CONVERSATION HISTORY:\n" + "\n\n".join(history_lines))
 
-    parts.append(f"### CONTEXT\n{context}")
-    parts.append(f"### QUESTION\n{question}")
-    parts.append("### ANSWER\n")
+    parts.append(f"CONTEXT:\n{context}")
+    parts.append(f"QUESTION:\n{question}")
+    parts.append("Answer:")
 
     return "\n\n".join(parts)
 

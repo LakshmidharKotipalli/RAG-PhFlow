@@ -47,8 +47,7 @@ class LlamaCppClient:
     _STOP_TOKENS = [
         "<|im_end|>", "<|im_start|>", "<|ir_end|>",
         "</s>", "<|endoftext|>", "<|eot_id|>",
-        "### INSTRUCTIONS", "### CONTEXT", "### QUESTION",
-        "### CONVERSATION",
+        "INSTRUCTIONS:", "CONTEXT:", "QUESTION:", "CONVERSATION HISTORY:",
     ]
 
     def _payload(self, prompt: str, stream: bool) -> dict:
