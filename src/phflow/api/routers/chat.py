@@ -51,6 +51,15 @@ async def _handle_chat(
             expand_to_parent=True,
             stream=False,
         )
+    except httpx.ReadTimeout:
+        raise HTTPException(
+            status_code=504,
+            detail=(
+                "The LLM did not respond in time. The model may be overloaded or "
+                "the prompt is too large. Try a shorter question, or increase "
+                "LLAMA_CPP_NUM_CTX / raise the server timeout."
+            ),
+        )
     except (ResponseHandlingException, httpx.ConnectError):
         raise HTTPException(
             status_code=503,

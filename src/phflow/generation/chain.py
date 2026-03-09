@@ -101,10 +101,14 @@ class RAGChain:
         """
         history = conversation_history or []
 
-        # Correct spelling and rephrase colloquial input before retrieval
-        correction_prompt = build_correction_prompt(query)
-        corrected = await self.llm.correct_query(correction_prompt)
-        clean_query = corrected if corrected else query  # fallback to original
+        # Correct spelling and rephrase colloquial input before retrieval.
+        # If the correction call times out or fails, fall back to the original query.
+        try:
+            correction_prompt = build_correction_prompt(query)
+            corrected = await self.llm.correct_query(correction_prompt)
+            clean_query = corrected if corrected else query
+        except Exception:
+            clean_query = query
 
         # Context-aware retrieval query (uses corrected query)
         retrieval_query = build_retrieval_query(history, clean_query)
