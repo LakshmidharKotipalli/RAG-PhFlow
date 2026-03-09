@@ -14,9 +14,11 @@ from __future__ import annotations
 from fastembed import SparseTextEmbedding
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
+    FieldCondition,
     Filter,
     Fusion,
     FusionQuery,
+    MatchValue,
     Prefetch,
     SparseVector,
 )
@@ -24,6 +26,23 @@ from qdrant_client.models import (
 from phflow.embeddings.encoder import RegulationEncoder
 from phflow.retrieval.reranker import Reranker
 from phflow.vectorstore.client import scroll_by_node
+
+
+# Always restrict retrieval to substantive text chunks.
+# "authority" and "table" chunks are short and generic — they dominate
+# embeddings and BM25 even for unrelated queries, pushing relevant
+# paragraph text out of the candidate pool.
+_TEXT_ONLY = Filter(
+    must=[FieldCondition(key="chunk_type", match=MatchValue(value="text"))]
+)
+
+
+def _merge_filters(base: Filter | None, extra: Filter) -> Filter:
+    """Combine two Qdrant filters by AND-ing their must conditions."""
+    must = list(extra.must or [])
+    if base and base.must:
+        must.extend(base.must)
+    return Filter(must=must)
 
 
 class HybridRetriever:
@@ -74,6 +93,9 @@ class HybridRetriever:
         dense_vec = self.encoder.encode_query(query)
         sparse_vec = self._encode_sparse(query)
 
+        # Merge caller filter with the mandatory text-only filter
+        search_filter = _merge_filters(qdrant_filter, _TEXT_ONLY)
+
         # Hybrid search via Qdrant native RRF
         prefetch_limit = self.initial_k * 2
         response = self.qdrant.query_points(
@@ -83,13 +105,13 @@ class HybridRetriever:
                     query=dense_vec,
                     using="",
                     limit=prefetch_limit,
-                    filter=qdrant_filter,
+                    filter=search_filter,
                 ),
                 Prefetch(
                     query=sparse_vec,
                     using="bm25",
                     limit=prefetch_limit,
-                    filter=qdrant_filter,
+                    filter=search_filter,
                 ),
             ],
             query=FusionQuery(fusion=Fusion.RRF),
