@@ -227,16 +227,6 @@ details.source-card[open] summary::before {
   white-space: pre-wrap;
 }
 
-/* ── Citations footer ─────────────────────────────────────── */
-.citations-footer {
-  margin-top: 10px;
-  font-size: 12px;
-  color: var(--text-muted);
-  border-top: 1px solid var(--border);
-  padding-top: 8px;
-  white-space: pre-wrap;
-}
-
 /* ── Input area ───────────────────────────────────────────── */
 #input-area {
   flex-shrink: 0;

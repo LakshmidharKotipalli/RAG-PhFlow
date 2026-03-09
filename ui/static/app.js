@@ -98,7 +98,7 @@
   }
 
   // ── Source cards ────────────────────────────────────────────
-  function renderSources(bubble, sources, citationsFooter) {
+  function renderSources(bubble, sources) {
     if (!sources || sources.length === 0) return;
 
     const wrapper = document.createElement('div');
@@ -139,13 +139,6 @@
 
       wrapper.appendChild(details);
     });
-
-    if (citationsFooter) {
-      const footer = document.createElement('div');
-      footer.className = 'citations-footer';
-      footer.textContent = citationsFooter;
-      wrapper.appendChild(footer);
-    }
 
     bubble.appendChild(wrapper);
     scrollToBottom();
@@ -212,7 +205,7 @@
       scrollToBottom();
 
       typewrite(bubble, data.answer, () => {
-        renderSources(bubble, data.sources, data.citations_footer);
+        renderSources(bubble, data.sources);
       });
 
     } catch (err) {
