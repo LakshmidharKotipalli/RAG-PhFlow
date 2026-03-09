@@ -85,6 +85,22 @@ class LlamaCppClient:
                     changed = True
         return result
 
+    async def correct_query(self, prompt: str) -> str:
+        """
+        Run a short correction pass on the user query.
+        Uses a tight token budget since the output is a single sentence.
+        Falls back to the original if the corrected result is empty.
+        """
+        payload = self._payload(prompt, stream=False)
+        payload["n_predict"] = 128   # one sentence is enough
+        resp = await self._client.post(
+            f"{self.base_url}/completion",
+            json=payload,
+        )
+        resp.raise_for_status()
+        corrected = self._clean(resp.json().get("content", "")).strip()
+        return corrected or ""   # caller decides fallback
+
     async def generate(self, prompt: str) -> str:
         """Generate a complete response (non-streaming)."""
         resp = await self._client.post(

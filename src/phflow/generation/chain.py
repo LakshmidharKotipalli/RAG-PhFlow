@@ -12,7 +12,7 @@ from collections.abc import AsyncIterator
 
 from phflow.generation.citations import format_context_block, source_summary
 from phflow.generation.llm import LlamaCppClient
-from phflow.generation.prompts import build_prompt, build_retrieval_query
+from phflow.generation.prompts import build_correction_prompt, build_prompt, build_retrieval_query
 from phflow.retrieval.filters import build_filter
 from phflow.retrieval.hybrid import HybridRetriever
 
@@ -88,8 +88,13 @@ class RAGChain:
         """
         history = conversation_history or []
 
-        # Context-aware retrieval query
-        retrieval_query = build_retrieval_query(history, query)
+        # Correct spelling and rephrase colloquial input before retrieval
+        correction_prompt = build_correction_prompt(query)
+        corrected = await self.llm.correct_query(correction_prompt)
+        clean_query = corrected if corrected else query  # fallback to original
+
+        # Context-aware retrieval query (uses corrected query)
+        retrieval_query = build_retrieval_query(history, clean_query)
 
         # Build metadata filter
         qdrant_filter = build_filter(
@@ -106,11 +111,11 @@ class RAGChain:
             expand_to_parent=expand_to_parent,
         )
 
-        # Build prompt: instructions + history + context + question
+        # Build prompt: instructions + history + context + corrected question
         context = format_context_block(sections)
         prompt = build_prompt(
             context=context,
-            question=query,
+            question=clean_query,
             conversation_history=history,
         )
 
