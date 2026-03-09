@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 # Absolute path to ui/ — safe regardless of working directory
 _UI_DIR = Path(__file__).parents[3] / "ui"
 
-from phflow.api.routers import chat, compliance, health, search
+from phflow.api.routers import chat, health, search
 from phflow.config.settings import settings
 from phflow.embeddings.encoder import RegulationEncoder
 from phflow.generation.chain import RAGChain
@@ -110,7 +110,6 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
     app.include_router(search.router)
     app.include_router(chat.router)
-    app.include_router(compliance.router)
 
     app.mount("/static", StaticFiles(directory=str(_UI_DIR / "static")), name="static")
 

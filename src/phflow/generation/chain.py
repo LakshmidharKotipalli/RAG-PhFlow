@@ -64,7 +64,6 @@ class RAGChain:
         # Format context for LLM
         context = format_context_block(sections)
         messages = build_messages(
-            mode=mode,
             context=context,
             question=query,
             conversation_history=history,

@@ -49,7 +49,7 @@ class SearchResponse(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=5000)
-    mode: Literal["qa", "compliance", "research"] = "qa"
+    mode: Literal["qa"] = "qa"
     filters: SearchFilters = Field(default_factory=SearchFilters)
     stream: bool = False
 
@@ -66,19 +66,6 @@ class ChatResponse(BaseModel):
     sources: list[SourceResult]
     citations_footer: str
     mode: str
-
-
-# --- Compliance ---
-
-class ComplianceRequest(BaseModel):
-    scenario: str = Field(..., min_length=10, max_length=10000)
-    filters: SearchFilters = Field(default_factory=SearchFilters)
-
-
-class ComplianceResponse(BaseModel):
-    answer: str
-    sources: list[SourceResult]
-    citations_footer: str
 
 
 # --- Parts listing ---
