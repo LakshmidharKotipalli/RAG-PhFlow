@@ -8,7 +8,7 @@ the model outputs "yes"/"no" tokens whose logits are used as relevance scores.
 from __future__ import annotations
 
 import torch
-from transformers import AutoModelForSequenceClassification, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
 RERANKER_INSTRUCTION = (
@@ -27,13 +27,13 @@ class Reranker:
         self.tokenizer = AutoTokenizer.from_pretrained(model_name, padding_side="left")
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
-        self.model = AutoModelForSequenceClassification.from_pretrained(
+        self.model = AutoModelForCausalLM.from_pretrained(
             model_name,
-            torch_dtype=torch.float32,
+            dtype=torch.float32,
             trust_remote_code=True,
         ).to(device)
         self.model.config.pad_token_id = self.tokenizer.pad_token_id
-        self.model.train(False)
+        self.model.train(False)  # inference mode: disables dropout
         self.device = device
         self.max_length = max_length
 
@@ -78,10 +78,11 @@ class Reranker:
                 return_tensors="pt",
             ).to(self.device)
 
-            logits = self.model(**inputs).logits
+            # CausalLM outputs [batch, seq_len, vocab_size]; score from last token
+            last_token_logits = self.model(**inputs).logits[:, -1, :]
             # Softmax over [false_id, true_id] → relevance probability for "yes"
             scores = torch.nn.functional.softmax(
-                logits[:, [self.token_false_id, self.token_true_id]], dim=-1
+                last_token_logits[:, [self.token_false_id, self.token_true_id]], dim=-1
             )[:, 1].tolist()
 
         ranked = sorted(zip(scores, candidates), key=lambda x: x[0], reverse=True)
