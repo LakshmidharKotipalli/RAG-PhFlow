@@ -17,6 +17,19 @@ from phflow.retrieval.filters import build_filter
 from phflow.retrieval.hybrid import HybridRetriever
 
 
+# Matches a bare CFR section header echo, e.g. "21 CFR § 117.3 — § 117.3 Definitions."
+# These are degenerate answers where the LLM echoed a context block header.
+_BARE_HEADER_RE = re.compile(
+    r"^21\s+CFR\s+§?\s*[\d.]+(\s*[\u2014\-]\s*.+)?\.?$",
+    re.IGNORECASE,
+)
+
+_INSUFFICIENT = (
+    "The provided context does not contain sufficient information "
+    "to answer this question."
+)
+
+
 def _parse_used_sources(answer: str, all_sources: list[dict]) -> tuple[str, list[dict]]:
     """
     Find the SOURCES_USED declaration in the answer (scans bottom-up so it is
@@ -128,6 +141,11 @@ class RAGChain:
 
         # Parse declared sources and clean the answer
         answer, used_sources = _parse_used_sources(raw_answer, all_sources)
+
+        # Catch degenerate answers: empty or bare CFR section header echoes
+        if not answer or _BARE_HEADER_RE.match(answer.strip()):
+            answer = _INSUFFICIENT
+            used_sources = []
 
         return {
             "answer": answer,
