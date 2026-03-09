@@ -25,11 +25,14 @@ class Reranker:
         max_length: int = 512,
     ) -> None:
         self.tokenizer = AutoTokenizer.from_pretrained(model_name, padding_side="left")
+        if self.tokenizer.pad_token is None:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
         self.model = AutoModelForSequenceClassification.from_pretrained(
             model_name,
             torch_dtype=torch.float32,
             trust_remote_code=True,
         ).to(device)
+        self.model.config.pad_token_id = self.tokenizer.pad_token_id
         self.model.train(False)
         self.device = device
         self.max_length = max_length
