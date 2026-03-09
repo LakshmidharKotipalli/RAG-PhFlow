@@ -64,7 +64,7 @@ def build_prompt(
 
     parts.append(f"CONTEXT:\n{context}")
     parts.append(f"QUESTION:\n{question}")
-    parts.append("Answer:")
+    parts.append("Answer: ")
 
     return "\n\n".join(parts)
 

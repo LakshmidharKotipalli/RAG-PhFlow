@@ -43,11 +43,19 @@ class LlamaCppClient:
         self.max_tokens = max_tokens if max_tokens is not None else settings.llama_cpp_max_tokens
         self._client = httpx.AsyncClient(timeout=timeout)
 
-    # Tokens that must never appear in the generated answer
-    _STOP_TOKENS = [
+    # EOS / role tokens sent to llama.cpp as stop sequences.
+    # Do NOT include prompt section labels here — if the model echoes one
+    # as its first token, generation stops immediately and _clean() would
+    # strip it, leaving an empty answer.
+    _EOS_TOKENS = [
         "<|im_end|>", "<|im_start|>", "<|ir_end|>",
         "</s>", "<|endoftext|>", "<|eot_id|>",
-        "INSTRUCTIONS:", "CONTEXT:", "QUESTION:", "CONVERSATION HISTORY:",
+    ]
+
+    # Section labels that should be stripped from the start/end of the
+    # generated text if the model leaks them, but must NOT be stop sequences.
+    _LABEL_TOKENS = [
+        "INSTRUCTIONS:", "CONTEXT:", "QUESTION:", "CONVERSATION HISTORY:", "Answer:",
     ]
 
     def _payload(self, prompt: str, stream: bool) -> dict:
@@ -58,17 +66,17 @@ class LlamaCppClient:
             "top_p": 0.9,
             "n_ctx": self.num_ctx,
             "stream": stream,
-            "stop": self._STOP_TOKENS,
+            "stop": self._EOS_TOKENS,
         }
 
     @classmethod
     def _clean(cls, text: str) -> str:
-        """Strip any leaked stop tokens from the start/end of generated text."""
+        """Strip leaked EOS or section-label tokens from the start/end of generated text."""
         result = text.strip()
         changed = True
         while changed:
             changed = False
-            for token in cls._STOP_TOKENS:
+            for token in (*cls._EOS_TOKENS, *cls._LABEL_TOKENS):
                 if result.startswith(token):
                     result = result[len(token):].strip()
                     changed = True

@@ -11,7 +11,7 @@ from qdrant_client.http.exceptions import ResponseHandlingException
 from phflow.api.dependencies import get_chain
 from phflow.api.schemas import ChatRequest, ChatResponse, SourceResult
 from phflow.generation.chain import RAGChain
-from phflow.generation.citations import format_citations_footer, source_summary
+from phflow.generation.citations import source_summary
 
 router = APIRouter(prefix="/api/v1", tags=["chat"])
 
@@ -126,6 +126,7 @@ async def continue_chat(
             stream=True,
             part_number=req.filters.part_number,
             chapter_number=req.filters.chapter_number,
+            amended_after=req.filters.amended_after,
         )
 
         async def token_generator():
