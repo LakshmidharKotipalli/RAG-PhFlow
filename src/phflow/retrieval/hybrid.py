@@ -122,13 +122,13 @@ class HybridRetriever:
         )
 
         if logger:
-            logger.log("RERANKING (post-rerank)", [
+            logger.log("RERANKING (post-rerank, actual yes/no probability)", [
                 {
                     "section_number": c.payload.get("section_number", ""),
                     "section_title": c.payload.get("section_title", ""),
-                    "reranker_score": round(c.score, 6),
+                    "reranker_probability": round(score, 6),
                 }
-                for c in reranked
+                for score, c in reranked
             ])
 
         if not expand_to_parent:
@@ -138,17 +138,17 @@ class HybridRetriever:
                     "section_title": c.payload.get("section_title", ""),
                     "section_node": c.payload.get("section_node", ""),
                     "full_text": c.payload.get("chunk_text", ""),
-                    "score": c.score,
+                    "score": score,
                     "metadata": c.payload,
                 }
-                for c in reranked
+                for score, c in reranked
             ]
 
         # Parent expansion: fetch full section for each unique section_node
         results: list[dict] = []
         seen_nodes: set[str] = set()
 
-        for chunk in reranked:
+        for score, chunk in reranked:
             node = chunk.payload.get("section_node", "")
             if node in seen_nodes:
                 continue
@@ -164,7 +164,7 @@ class HybridRetriever:
                 "section_title": chunk.payload.get("section_title", ""),
                 "section_node": node,
                 "full_text": full_text,
-                "score": chunk.score,
+                "score": score,
                 "metadata": chunk.payload,
             })
 

@@ -104,4 +104,5 @@ class Reranker:
             )[:, 1].tolist()
 
         ranked = sorted(zip(scores, candidates), key=lambda x: x[0], reverse=True)
-        return [c for score, c in ranked[:top_n] if score >= score_threshold]
+        # Return (reranker_score, candidate) tuples so callers can log real probabilities
+        return [(score, c) for score, c in ranked[:top_n] if score >= score_threshold]

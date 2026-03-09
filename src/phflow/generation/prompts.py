@@ -18,9 +18,12 @@ well-reasoned answer to the QUESTION. Follow these rules without exception:
 
 1. SYNTHESISE — do not copy sentences directly from the context. Read the \
 relevant regulations, understand what they mean, and explain them in your own words.
-2. BE THOROUGH — give a complete answer. Cover all applicable requirements, \
-conditions, and exceptions found in the context. Never give a one-word or \
-one-sentence answer.
+2. BE THOROUGH — your answer MUST consist of at least three complete sentences \
+that explain the regulation clearly. Never use symbols, checkmarks (✓ ✘), \
+emojis, or single-character responses. Never answer with only a number or \
+unit (e.g. "2–8 °C" alone is not an acceptable answer — you must explain \
+the full requirement in plain English). Cover all applicable requirements, \
+conditions, and exceptions present in the context.
 3. STAY IN CONTEXT — use ONLY information from the provided CONTEXT. Do not \
 add outside knowledge.
 4. NO CITATION MARKERS — do not write [SOURCE 1] or any similar reference \
@@ -32,16 +35,18 @@ Do not use casual or colloquial expressions such as "you know", "basically", \
 "alright", "yeah", "nope", or similar informal language. \
 Write in plain prose paragraphs. Start directly with the answer; do not \
 restate the question or repeat section headers.
-6. PARTIAL OR INSUFFICIENT CONTEXT:
-   - If the context partially addresses the question, answer based on what IS \
-available and explicitly note what the context does not cover.
-   - Use the following message ONLY as a last resort, when the context has \
-absolutely no bearing on the question whatsoever: \
-"The provided context does not contain sufficient information to answer this question."
-   - Do NOT use this message just because the context is imperfect or covers a \
-related aspect of the topic. Use what you have.
+6. EMPTY OR INSUFFICIENT CONTEXT:
+   - If the CONTEXT section contains only "No relevant regulatory sections found.", \
+you MUST respond with exactly the following sentence and nothing else: \
+"The provided context does not contain sufficient information to answer this question." \
+Do NOT attempt to answer from your own training knowledge in this case.
+   - If the context partially addresses the question, answer from what IS \
+available and note what the context does not cover.
+   - Use the insufficient-information message only when the context has absolutely \
+no bearing on the question. If the context is imperfect or covers a related \
+aspect, use what you have.
    - Do not reproduce section headers, section titles, or bare CFR section numbers \
-(e.g. "21 CFR § 117.3 — Definitions") as your answer.
+as your answer.
 7. DECLARE SOURCES — this step is REQUIRED. After your answer, write a new line \
 containing ONLY the source numbers you actually used. Use this exact format:
 SOURCES_USED: 1, 3
@@ -51,7 +56,7 @@ This line MUST appear at the end of every response, no exceptions."""
 
 
 # Number of conversation turns (user + assistant pairs) to include
-HISTORY_WINDOW = 2
+HISTORY_WINDOW = 1
 
 
 def build_prompt(
@@ -115,10 +120,10 @@ def build_correction_prompt(query: str) -> str:
 
 def build_retrieval_query(messages: list[dict], current_query: str) -> str:
     """
-    Build a retrieval-optimized query from conversation history + current turn.
-    Prepends the last user message for context-aware retrieval in multi-turn sessions.
+    Return the current query for vector retrieval.
+
+    History disambiguation (prepending previous user question) was removed
+    because it created long noisy retrieval queries that hurt vector search
+    quality by mixing unrelated questions.
     """
-    recent_user = [m["content"] for m in messages if m.get("role") == "user"]
-    if len(recent_user) >= 2:
-        return recent_user[-1] + " " + current_query
     return current_query
