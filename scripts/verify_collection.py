@@ -22,8 +22,9 @@ def main() -> None:
 
     info = client.get_collection(settings.collection_name)
     print(f"Collection: {settings.collection_name}")
+    vectors_count = getattr(info, "vectors_count", None) or info.points_count
     print(f"  Total points     : {info.points_count:,}")
-    print(f"  Vectors count    : {info.vectors_count:,}")
+    print(f"  Vectors count    : {vectors_count:,}")
     print(f"  Status           : {info.status}")
     print()
 
