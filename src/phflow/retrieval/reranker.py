@@ -56,6 +56,7 @@ class Reranker:
         query: str,
         candidates: list,  # list of ScoredPoint from Qdrant
         top_n: int = 5,
+        score_threshold: float = 0.5,
     ) -> list:
         """
         Rerank candidate chunks by relevance to the query.
@@ -86,4 +87,4 @@ class Reranker:
             )[:, 1].tolist()
 
         ranked = sorted(zip(scores, candidates), key=lambda x: x[0], reverse=True)
-        return [c for score, c in ranked[:top_n] if score >= 0.75]
+        return [c for score, c in ranked[:top_n] if score >= score_threshold]

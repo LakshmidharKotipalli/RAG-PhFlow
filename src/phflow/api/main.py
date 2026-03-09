@@ -67,6 +67,7 @@ async def lifespan(app: FastAPI):
         reranker=reranker,
         initial_k=settings.initial_retrieval_k,
         reranker_top_n=settings.reranker_top_n,
+        reranker_score_threshold=settings.reranker_score_threshold,
     )
 
     # RAG chain

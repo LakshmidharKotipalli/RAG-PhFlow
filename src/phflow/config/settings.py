@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     # Retrieval
     initial_retrieval_k: int = 20
     reranker_top_n: int = 5
+    reranker_score_threshold: float = 0.5  # min yes-probability to pass to LLM
 
     # Chunking
     chunk_target_tokens: int = 400

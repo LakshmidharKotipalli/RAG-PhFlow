@@ -35,6 +35,7 @@ class HybridRetriever:
         reranker: Reranker,
         initial_k: int = 20,
         reranker_top_n: int = 5,
+        reranker_score_threshold: float = 0.5,
     ) -> None:
         self.qdrant = qdrant
         self.collection_name = collection_name
@@ -42,6 +43,7 @@ class HybridRetriever:
         self.reranker = reranker
         self.initial_k = initial_k
         self.reranker_top_n = reranker_top_n
+        self.reranker_score_threshold = reranker_score_threshold
         self._sparse_model = SparseTextEmbedding(model_name="Qdrant/bm25")
 
     def _encode_sparse(self, text: str) -> SparseVector:
@@ -99,7 +101,12 @@ class HybridRetriever:
             return []
 
         # Rerank candidates
-        reranked = self.reranker.rerank(query, candidates, top_n=top_n or self.reranker_top_n)
+        reranked = self.reranker.rerank(
+            query,
+            candidates,
+            top_n=top_n or self.reranker_top_n,
+            score_threshold=self.reranker_score_threshold,
+        )
 
         if not expand_to_parent:
             return [
