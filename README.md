@@ -1,8 +1,8 @@
 # PhFlow — FDA Regulatory Intelligence
 
-A RAG (Retrieval-Augmented Generation) application for querying and reasoning over **Title 21 of the Code of Federal Regulations (FDA — Food and Drugs)**.
+A RAG (Retrieval-Augmented Generation) application for querying and reasoning over **Title 21 of the Code of Federal Regulations (FDA — Food and Drugs)**, focused on pharmaceutical and medical purchase order compliance.
 
-Ask natural-language questions and get answers cited to specific CFR sections — fully local, no external APIs required.
+Ask natural-language questions and get synthesised, well-explained answers grounded in specific CFR sections — fully local, no external APIs required.
 
 ---
 
@@ -16,7 +16,7 @@ Ask natural-language questions and get answers cited to specific CFR sections �
                              │ HTTP / JSON
 ┌────────────────────────────▼────────────────────────────────────┐
 │                     FastAPI (port 8000)                         │
-│   /chat   /search   /compliance/check   /sections   /health     │
+│              /chat   /search   /sections   /health              │
 └───┬──────────────────────────────────────────────────────┬──────┘
     │                                                      │
     ▼                                                      ▼
@@ -31,9 +31,9 @@ Ask natural-language questions and get answers cited to specific CFR sections �
 │                                                                  │
 │  Query ──► PubMedBERT embed ──► Dense vector ─────┐             │
 │        ──► BM25 (fastembed)  ──► Sparse vector ───┤  RRF Fusion │
-│                                                   └──► Qdrant   │
+│                          (text chunks only)        └──► Qdrant  │
 │                                     Qwen3-Reranker-0.6B ──► top-5│
-│                                     Parent expansion ──► LLM    │
+│                                     Parent expansion ──► LLM   │
 └──────────────────────────────────────────────────────────────────┘
     │
     ▼
@@ -75,6 +75,7 @@ Source: `data/ecfr-title-21/ECFR-title21.xml`
 
 ```
 RAG-PhFlow/
+├── Makefile                      # dev/run/ingest shortcuts
 ├── pyproject.toml
 ├── .env                          # local config (copy from .env.example)
 ├── docker-compose.yml            # Qdrant service
@@ -94,18 +95,18 @@ RAG-PhFlow/
 │   │   └── schema.py             # collection + payload index setup
 │   ├── retrieval/
 │   │   ├── hybrid.py             # dense + sparse RRF → rerank → parent expand
-│   │   ├── reranker.py           # Qwen3-Reranker-0.6B
+│   │   ├── reranker.py           # Qwen3-Reranker-0.6B (yes/no logit scoring)
 │   │   └── filters.py            # Qdrant Filter builder
 │   ├── generation/
-│   │   ├── llm.py                # llama.cpp HTTP client (streaming + non-streaming)
-│   │   ├── prompts.py            # QA / compliance / research prompt templates
-│   │   ├── citations.py          # CFR citation formatting
-│   │   └── chain.py              # RAG chain
+│   │   ├── llm.py                # llama.cpp HTTP client
+│   │   ├── prompts.py            # QA system prompt + query builder
+│   │   ├── citations.py          # context block + source summary formatting
+│   │   └── chain.py              # full RAG pipeline orchestrator
 │   └── api/
-│       ├── main.py               # FastAPI app factory + lifespan + static file serving
+│       ├── main.py               # FastAPI app factory + static file serving
 │       ├── schemas.py            # Pydantic request/response models
 │       ├── dependencies.py       # FastAPI Depends injectors
-│       └── routers/              # health.py, search.py, chat.py, compliance.py
+│       └── routers/              # health.py, search.py, chat.py
 │
 ├── scripts/
 │   ├── ingest.py                 # ingestion CLI
@@ -113,11 +114,12 @@ RAG-PhFlow/
 ├── tests/
 │   ├── unit/                     # test_chunker.py, test_cleaner.py
 │   └── integration/
-└── ui/
-    ├── index.html                # single-page Q&A app
-    └── static/
-        ├── style.css
-        └── app.js
+├── ui/
+│   ├── index.html                # single-page Q&A app
+│   └── static/
+│       ├── style.css
+│       └── app.js
+└── query_logs/                   # per-query pipeline debug logs (gitignored)
 ```
 
 ---
@@ -140,7 +142,8 @@ pip install -e ".[ingestion,api]"
 ### 2. Start Qdrant
 
 ```bash
-docker compose up -d
+make qdrant
+# or: docker compose up -d
 ```
 
 Qdrant dashboard: http://localhost:6333/dashboard
@@ -149,7 +152,7 @@ Qdrant dashboard: http://localhost:6333/dashboard
 
 ```bash
 llama-server -m /path/to/Llama-3.1-8B-Instruct-Q4_K_M.gguf \
-             -c 32768 \
+             -c 65536 \
              --port 8080
 
 # Verify it's running:
@@ -161,27 +164,32 @@ Recommended models (from [bartowski on HuggingFace](https://huggingface.co/barto
 - `Mistral-7B-Instruct-v0.3-Q4_K_M.gguf` — faster, lower memory
 - `Meta-Llama-3.1-70B-Instruct-Q4_K_M.gguf` — highest quality (requires ~40 GB RAM)
 
+> **Context window:** The server must be started with `-c 65536` to match `LLAMA_CPP_NUM_CTX=65536` in `.env`. Using a smaller value silently caps the context.
+
 ### 4. Configure environment
 
 ```bash
 cp .env.example .env
-# Edit .env — set LLAMA_CPP_URL if your server runs on a different port
+# Edit .env as needed
 ```
 
 ### 5. Run ingestion
 
 ```bash
-# First time — creates collection and indexes ~50K chunks (~25 min on CPU):
-python scripts/ingest.py --reset
+make ingest
+# or: python scripts/ingest.py --reset
 
 # Verify:
-python scripts/verify_collection.py
+make verify
 ```
+
+Estimated time: ~25 minutes on CPU, ~4 minutes with GPU.
 
 ### 6. Start the API + UI
 
 ```bash
-uvicorn phflow.api.main:app --reload --port 8000
+make run          # production (no reload)
+make dev          # development (auto-reload on src/ and ui/ changes only)
 ```
 
 Open **http://localhost:8000** — the Q&A interface loads in your browser.
@@ -215,9 +223,9 @@ POST /api/v1/chat
 ```
 ```json
 {
-  "message": "What are the GMPs for food manufacturing?",
+  "message": "What are the GMP requirements for drug product labeling?",
   "mode": "qa",
-  "filters": {"part_number": 110},
+  "filters": {"part_number": 211},
   "stream": false
 }
 ```
@@ -226,9 +234,14 @@ Response:
 ```json
 {
   "session_id": "uuid",
-  "answer": "...",
-  "sources": [{"section_number": "§ 110.10", "section_title": "...", "full_text": "..."}],
-  "citations_footer": "...",
+  "answer": "Under 21 CFR Part 211, drug product labels must include...",
+  "sources": [
+    {
+      "section_number": "§ 211.68",
+      "section_title": "Automatic, mechanical, and electronic equipment.",
+      "full_text": "..."
+    }
+  ],
   "mode": "qa"
 }
 ```
@@ -252,18 +265,6 @@ POST /api/v1/search
 }
 ```
 
-### Compliance Check
-
-```
-POST /api/v1/compliance/check
-```
-```json
-{
-  "scenario": "We manufacture a dietary supplement in capsule form and our label shows a Supplement Facts panel but omits the serving size declaration.",
-  "filters": {"part_number": 101}
-}
-```
-
 ### Section Lookup
 
 ```
@@ -273,51 +274,52 @@ GET /api/v1/parts
 
 ---
 
-## Chunking Strategy
+## RAG Pipeline
 
-Each DIV8 section is split into **parent + child chunks**:
-
-- **Parent text** — full section stored in Qdrant payload (`parent_text`), NOT embedded. Used for LLM context after retrieval.
-- **Child chunks** — embedded into the vector index:
-  - Target: 400 tokens, max 512 tokens (matches PubMedBERT context window)
-  - Split at `<P>` paragraph boundaries first, then sentence boundaries
-  - Short sections (<150 tokens) → single chunk
-  - Tables → `chunk_type="table"`
-  - AUTH/SOURCE blocks → `chunk_type="authority"`
-
-Every chunk is prefixed with a regulatory context header:
-```
-21 CFR § 1.24 — Exemptions from required label statements.
-Part 1: General Enforcement Regulations | Subpart B: General Labeling Requirements
-
-<chunk text>
-```
-
----
-
-## Retrieval Pipeline
+### Retrieval
 
 ```
-Query
+User query
   │
   ├─► PubMedBERT encode ──────────────────────────────────┐
   │                                                        │
   └─► fastembed BM25 encode ─────────────────────────────►│
-                                                           │
+                              (text chunks only)           │
                                               Qdrant RRF Fusion
-                                              (top-40 dense + top-40 sparse)
+                                              (top-80 dense + top-80 sparse)
                                                            │
-                                                    top-20 candidates
+                                                 top-40 candidates
                                                            │
-                                            Qwen3-Reranker-0.6B
+                                           Qwen3-Reranker-0.6B
+                                           (yes/no logit scoring)
                                                            │
-                                                      top-5 sections
+                                                     top-5 sections
                                                            │
-                                              Parent expansion
-                                              (fetch full section text)
+                                             Parent expansion
+                                             (fetch full section text)
                                                            │
-                                                  LLM generation
+                                                 LLM generation
 ```
+
+### Generation
+
+The LLM receives:
+1. **System prompt** — role definition and strict answering rules (formal English, minimum 3 sentences, no symbols, cite only from context)
+2. **Conversation history** — last 1 turn for follow-up context
+3. **Retrieved context** — up to 5 sections labelled `[SOURCE 1]`…`[SOURCE N]`
+4. **Question** — the user's query
+
+The model must declare which sources it used at the end of its answer (`SOURCES_USED: 1, 3`). Only those sources are shown in the UI.
+
+### Per-query debug logs
+
+Every query writes a timestamped log to `query_logs/` capturing:
+- Original query
+- Retrieval candidates (pre-rerank) with RRF scores
+- Reranked results with actual reranker probabilities
+- Full assembled prompt
+- Raw LLM output
+- Final parsed answer and declared sources
 
 ---
 
@@ -328,16 +330,17 @@ All settings are in `.env` (see `.env.example`):
 | Variable | Default | Description |
 |---|---|---|
 | `EMBEDDING_MODEL` | `NeuML/pubmedbert-base-embeddings` | Sentence-transformer model |
-| `EMBEDDING_DEVICE` | `cpu` | `cpu`, `cuda`, or `mps` |
+| `EMBEDDING_DEVICE` | `cuda` | `cpu`, `cuda`, or `mps` |
 | `QDRANT_URL` | `http://localhost:6333` | Qdrant server URL |
 | `COLLECTION_NAME` | `ecfr_title21` | Qdrant collection |
 | `LLAMA_CPP_URL` | `http://localhost:8080` | llama.cpp server URL |
 | `LLAMA_CPP_TEMPERATURE` | `0.1` | LLM temperature (low = factual) |
-| `LLAMA_CPP_NUM_CTX` | `32768` | Context window (tokens) |
+| `LLAMA_CPP_NUM_CTX` | `65536` | Context window — must match `-c` on llama-server |
 | `LLAMA_CPP_MAX_TOKENS` | `2048` | Max response tokens |
 | `RERANKER_MODEL` | `Qwen/Qwen3-Reranker-0.6B` | Cross-encoder reranker |
-| `INITIAL_RETRIEVAL_K` | `20` | Candidates before reranking |
+| `INITIAL_RETRIEVAL_K` | `40` | Candidates before reranking |
 | `RERANKER_TOP_N` | `5` | Sections passed to LLM |
+| `RERANKER_SCORE_THRESHOLD` | `0.0` | Min reranker probability (0 = no filter) |
 | `CHUNK_TARGET_TOKENS` | `400` | Target chunk size |
 | `CHUNK_MAX_TOKENS` | `512` | Maximum chunk size |
 
