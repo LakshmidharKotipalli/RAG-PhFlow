@@ -5,11 +5,15 @@ Start the server with:
     llama-server -m /path/to/model.gguf -c 32768 --port 8080
 
 The server exposes:
-  POST /completion  — native completion endpoint (used here)
-  GET  /health      — liveness probe
+  POST /v1/chat/completions  — OpenAI-compatible chat endpoint (used here)
+  GET  /health               — liveness probe
 
-Streaming uses Server-Sent Events (SSE): each event is a JSON line with
-a "content" field; the final event has "stop": true.
+Using the chat completions endpoint ensures the model's chat template is
+applied automatically, so instruction-tuned models correctly generate answers
+rather than continuing the prompt as raw text completion.
+
+Streaming uses Server-Sent Events (SSE): each event is a JSON line with a
+"choices[0].delta.content" field; the stream ends with "data: [DONE]".
 """
 
 from __future__ import annotations
@@ -27,7 +31,6 @@ class LlamaCppClient:
         self,
         base_url: str | None = None,
         temperature: float | None = None,
-        num_ctx: int | None = None,
         max_tokens: int | None = None,
         timeout: int = 300,
     ) -> None:
@@ -39,57 +42,53 @@ class LlamaCppClient:
         else:
             self.base_url = settings.llama_cpp_base_url
         self.temperature = temperature if temperature is not None else settings.llama_cpp_temperature
-        self.num_ctx = num_ctx if num_ctx is not None else settings.llama_cpp_num_ctx
         self.max_tokens = max_tokens if max_tokens is not None else settings.llama_cpp_max_tokens
         self._client = httpx.AsyncClient(timeout=timeout)
 
-    def _payload(self, prompt: str, stream: bool) -> dict:
+    def _chat_payload(self, messages: list[dict], stream: bool) -> dict:
         return {
-            "prompt": prompt,
-            "n_predict": self.max_tokens,
+            "messages": messages,
+            "max_tokens": self.max_tokens,
             "temperature": self.temperature,
             "top_p": 0.9,
-            "n_ctx": self.num_ctx,
             "stream": stream,
-            "stop": ["</s>", "<|im_end|>", "QUESTION:", "REGULATORY CONTEXT:"],
         }
 
-    async def generate(self, prompt: str) -> str:
+    async def generate(self, messages: list[dict]) -> str:
         """Generate a complete response (non-streaming)."""
         resp = await self._client.post(
-            f"{self.base_url}/completion",
-            json=self._payload(prompt, stream=False),
+            f"{self.base_url}/v1/chat/completions",
+            json=self._chat_payload(messages, stream=False),
         )
         resp.raise_for_status()
-        return resp.json().get("content", "")
+        return resp.json()["choices"][0]["message"]["content"]
 
-    async def stream(self, prompt: str) -> AsyncIterator[str]:
-        """Stream response tokens via SSE."""
+    async def stream(self, messages: list[dict]) -> AsyncIterator[str]:
+        """Stream response tokens via SSE (OpenAI-compatible format)."""
         async with self._client.stream(
             "POST",
-            f"{self.base_url}/completion",
-            json=self._payload(prompt, stream=True),
+            f"{self.base_url}/v1/chat/completions",
+            json=self._chat_payload(messages, stream=True),
         ) as response:
             response.raise_for_status()
             async for line in response.aiter_lines():
-                # llama.cpp SSE format: "data: {...}"
                 if line.startswith("data: "):
+                    raw = line[6:]
+                    if raw.strip() == "[DONE]":
+                        break
                     try:
-                        data = json.loads(line[6:])
+                        data = json.loads(raw)
                     except json.JSONDecodeError:
                         continue
-                    token = data.get("content", "")
+                    token = data.get("choices", [{}])[0].get("delta", {}).get("content", "")
                     if token:
                         yield token
-                    if data.get("stop", False):
-                        break
 
     async def health(self) -> bool:
         """Return True if the llama.cpp server is reachable and ready."""
         try:
             resp = await self._client.get(f"{self.base_url}/health", timeout=5)
             body = resp.json()
-            # llama.cpp /health returns {"status": "ok"} when model is loaded
             return body.get("status") == "ok"
         except Exception:
             return False

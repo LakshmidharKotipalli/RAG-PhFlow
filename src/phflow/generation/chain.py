@@ -11,7 +11,7 @@ from collections.abc import AsyncIterator
 
 from phflow.generation.citations import format_context_block, format_citations_footer, source_summary
 from phflow.generation.llm import LlamaCppClient
-from phflow.generation.prompts import build_prompt, build_retrieval_query
+from phflow.generation.prompts import build_messages, build_retrieval_query
 from phflow.retrieval.filters import build_filter
 from phflow.retrieval.hybrid import HybridRetriever
 
@@ -63,13 +63,13 @@ class RAGChain:
 
         # Format context for LLM
         context = format_context_block(sections)
-        prompt = build_prompt(mode=mode, context=context, question=query)
+        messages = build_messages(mode=mode, context=context, question=query)
 
         if stream:
-            return self.llm.stream(prompt)
+            return self.llm.stream(messages)
 
         # Generate
-        answer = await self.llm.generate(prompt)
+        answer = await self.llm.generate(messages)
         citations = format_citations_footer(sections)
         sources = source_summary(sections)
 
