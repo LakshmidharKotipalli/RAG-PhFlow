@@ -47,13 +47,13 @@ def _create_payload_indexes(client: QdrantClient, collection_name: str) -> None:
     bool_fields = ["is_removed", "has_table", "substantive_change"]
 
     for field in integer_fields:
-        client.create_payload_index(collection_name, field, PayloadSchemaType.INTEGER)
+        client.create_payload_index(collection_name, field, PayloadSchemaType.INTEGER, timeout=60)
 
     for field in keyword_fields:
-        client.create_payload_index(collection_name, field, PayloadSchemaType.KEYWORD)
+        client.create_payload_index(collection_name, field, PayloadSchemaType.KEYWORD, timeout=60)
 
     for field in bool_fields:
-        client.create_payload_index(collection_name, field, PayloadSchemaType.BOOL)
+        client.create_payload_index(collection_name, field, PayloadSchemaType.BOOL, timeout=60)
 
 
 def collection_exists(client: QdrantClient, collection_name: str) -> bool:

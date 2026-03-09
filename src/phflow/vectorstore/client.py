@@ -13,7 +13,7 @@ from phflow.config.settings import settings
 
 
 def get_qdrant_client() -> QdrantClient:
-    return QdrantClient(url=settings.qdrant_url)
+    return QdrantClient(url=settings.qdrant_url, timeout=60)
 
 
 def build_point(
