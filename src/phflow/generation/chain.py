@@ -35,28 +35,39 @@ _INSUFFICIENT = (
 # The _INSUFFICIENT message itself is 78 chars, so 60 is a safe lower bound.
 _MIN_ANSWER_LENGTH = 60
 
+# Prompt-section labels that must never appear inside a legitimate answer.
+# Their presence indicates the model echoed the prompt back (e.g. it repeated
+# CONTEXT: or QUESTION: after its answer text, filling max_tokens with garbage).
+_PROMPT_ECHO_SIGNALS = ("CONTEXT:", "QUESTION:", "INSTRUCTIONS:", "CONVERSATION HISTORY:")
+
+# Substrings that indicate the model produced a fill-in-the-blank placeholder
+# instead of a real answer (e.g. "by [fill in the blank]").
+_TEMPLATE_SIGNALS = ("[fill in", "[insert", "[answer here", "[provide")
+
 
 def _parse_used_sources(answer: str, all_sources: list[dict]) -> tuple[str, list[dict]]:
     """
-    Find the SOURCES_USED declaration in the answer (scans bottom-up so it is
-    found even when the LLM adds trailing blank lines or puts it one line above
-    the last line).
+    Find the SOURCES_USED declaration in the answer.
+
+    Scans top-down and takes the FIRST occurrence.  Taking the first (rather
+    than the last) is correct because the model should emit SOURCES_USED once
+    at the end of its answer; any subsequent occurrences are a repetition loop
+    and should be discarded along with everything after the first declaration.
 
     Returns:
         (clean_answer, used_sources)
-        - clean_answer: answer with the declaration line stripped and any
-          residual [SOURCE N] markers removed
+        - clean_answer: answer with the declaration line and everything after
+          it stripped, and residual [SOURCE N] markers removed
         - used_sources: subset of all_sources the model declared it used.
-          Defaults to [] (empty) if the declaration is absent — callers should
-          not fall back to showing everything when the LLM skips it.
+          Defaults to [] (empty) if the declaration is absent.
     """
     lines = answer.strip().splitlines()
-    used_sources: list[dict] = []   # default: show nothing
+    used_sources: list[dict] = []
     declaration_line_idx: int | None = None
 
-    # Scan from the bottom up to find the declaration
-    for i in range(len(lines) - 1, -1, -1):
-        m = re.match(r"SOURCES_USED:\s*(.+)", lines[i].strip(), re.IGNORECASE)
+    # Scan top-down: take the first SOURCES_USED line (before any loop starts)
+    for i, line in enumerate(lines):
+        m = re.match(r"SOURCES_USED:\s*(.+)", line.strip(), re.IGNORECASE)
         if m:
             declaration_line_idx = i
             declaration = m.group(1).strip()
@@ -70,7 +81,7 @@ def _parse_used_sources(answer: str, all_sources: list[dict]) -> tuple[str, list
                             used_sources.append(all_sources[idx])
             break
 
-    # Strip everything from the declaration line onwards
+    # Keep only the lines before the declaration
     if declaration_line_idx is not None:
         lines = lines[:declaration_line_idx]
 
@@ -173,16 +184,24 @@ class RAGChain:
         # Parse declared sources and clean the answer
         answer, used_sources = _parse_used_sources(raw_answer, all_sources)
 
-        # Catch degenerate answers:
-        #   - empty string
-        #   - bare CFR section header echoes (model repeated a context label)
-        #   - suspiciously short responses (< _MIN_ANSWER_LENGTH chars) that
-        #     indicate the LLM ignored context and gave a one-liner from
-        #     parametric memory (e.g. "2–8°C", "✘ No, you cannot.")
+        # Catch degenerate answers — replace all of these with _INSUFFICIENT:
+        #
+        #   1. Empty string.
+        #   2. Bare CFR section header echo (model repeated a context block label).
+        #   3. Too short — almost certainly a parametric one-liner
+        #      (e.g. "2–8°C", "✘ No, you cannot.") that bypassed the context rule.
+        #   4. Prompt echo — model reproduced prompt section labels in the body
+        #      of its answer (e.g. the Log-6 failure where CONTEXT: / QUESTION:
+        #      appear hundreds of times after the answer text, filling max_tokens).
+        #   5. Template placeholder — model emitted a fill-in-the-blank stub
+        #      instead of a real answer (e.g. "by [fill in the blank]").
+        answer_lower = answer.lower()
         if (
             not answer
             or _BARE_HEADER_RE.match(answer.strip())
             or len(answer.strip()) < _MIN_ANSWER_LENGTH
+            or any(sig in answer for sig in _PROMPT_ECHO_SIGNALS)
+            or any(sig in answer_lower for sig in _TEMPLATE_SIGNALS)
         ):
             answer = _INSUFFICIENT
             used_sources = []

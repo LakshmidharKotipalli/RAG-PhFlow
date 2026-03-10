@@ -15,6 +15,7 @@ Streaming uses Server-Sent Events (SSE): each line is "data: {json}" with a
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import AsyncIterator
 
 import httpx
@@ -67,12 +68,24 @@ class LlamaCppClient:
             "n_ctx": self.num_ctx,
             "stream": stream,
             "stop": self._EOS_TOKENS,
+            # Penalise repeated token sequences to prevent the model from
+            # looping on the SOURCES_USED line or echoing the prompt back.
+            "repeat_penalty": 1.1,
+            "repeat_last_n": 256,
+            "frequency_penalty": 0.1,
         }
 
     @classmethod
     def _clean(cls, text: str) -> str:
-        """Strip leaked EOS or section-label tokens from the start/end of generated text."""
+        """Strip leaked EOS tokens, section-label tokens, and reasoning blocks."""
         result = text.strip()
+
+        # Remove <think>...</think> reasoning blocks emitted by reasoning models
+        # (e.g. Qwen3, DeepSeek-R1).  The blocks may span multiple lines and
+        # may be empty.  Strip all occurrences, not just the first.
+        result = re.sub(r"<think>.*?</think>", "", result, flags=re.DOTALL).strip()
+
+        # Strip EOS / section-label tokens from the start and end.
         changed = True
         while changed:
             changed = False
