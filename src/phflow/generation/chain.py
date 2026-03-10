@@ -30,6 +30,11 @@ _INSUFFICIENT = (
     "to answer this question."
 )
 
+# Answers shorter than this are almost certainly hallucinated one-liners
+# (e.g. "2–8°C", "✘ No, you cannot.") that bypassed the context-only rule.
+# The _INSUFFICIENT message itself is 78 chars, so 60 is a safe lower bound.
+_MIN_ANSWER_LENGTH = 60
+
 
 def _parse_used_sources(answer: str, all_sources: list[dict]) -> tuple[str, list[dict]]:
     """
@@ -104,14 +109,10 @@ class RAGChain:
         qlog = QueryLogger(query)
         qlog.log("ORIGINAL QUERY", query)
 
-        # Use the query as-is — a separate LLM correction pass was removed
-        # because it doubled latency (full inference round-trip before retrieval).
-        # The system prompt instructs the main LLM to handle informal phrasing.
         clean_query = query
 
-        # Context-aware retrieval query (prepends last turn for disambiguation)
         retrieval_query = build_retrieval_query(history, clean_query)
-        qlog.log("RETRIEVAL QUERY (after history context)", retrieval_query)
+        qlog.log("RETRIEVAL QUERY", retrieval_query)
 
         # Build metadata filter
         qdrant_filter = build_filter(
@@ -133,11 +134,21 @@ class RAGChain:
             {
                 "section_number": s.get("section_number", ""),
                 "section_title": s.get("section_title", ""),
-                "confidence": s.get("score", 0.0),
+                "reranker_score": s.get("score", 0.0),
                 "full_text_chars": len(s.get("full_text", "")),
             }
             for s in sections
         ])
+
+        # Short-circuit: if retrieval found nothing after reranking, return the
+        # standard insufficient-context message immediately.  Calling the LLM
+        # with an empty context block causes it to hallucinate answers from
+        # parametric memory, producing confident but ungrounded responses.
+        if not sections:
+            qlog.log("FINAL ANSWER", _INSUFFICIENT)
+            qlog.log("SOURCES DECLARED BY LLM", [])
+            qlog.save()
+            return {"answer": _INSUFFICIENT, "sources": []}
 
         # Build prompt: instructions + history + context + corrected question
         context = format_context_block(sections)
@@ -162,8 +173,17 @@ class RAGChain:
         # Parse declared sources and clean the answer
         answer, used_sources = _parse_used_sources(raw_answer, all_sources)
 
-        # Catch degenerate answers: empty or bare CFR section header echoes
-        if not answer or _BARE_HEADER_RE.match(answer.strip()):
+        # Catch degenerate answers:
+        #   - empty string
+        #   - bare CFR section header echoes (model repeated a context label)
+        #   - suspiciously short responses (< _MIN_ANSWER_LENGTH chars) that
+        #     indicate the LLM ignored context and gave a one-liner from
+        #     parametric memory (e.g. "2–8°C", "✘ No, you cannot.")
+        if (
+            not answer
+            or _BARE_HEADER_RE.match(answer.strip())
+            or len(answer.strip()) < _MIN_ANSWER_LENGTH
+        ):
             answer = _INSUFFICIENT
             used_sources = []
 

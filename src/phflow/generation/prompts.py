@@ -90,21 +90,6 @@ def build_prompt(
     return "\n\n".join(parts)
 
 
-def build_correction_prompt(query: str) -> str:
-    """
-    Build a short prompt that asks the LLM to fix spelling mistakes and
-    rephrase informal/colloquial input into formal professional language.
-    Returns only the corrected question — no explanation, no extra text.
-    """
-    return (
-        "Fix any spelling mistakes and rewrite the following question in formal, "
-        "professional English suitable for a pharmaceutical regulatory database query. "
-        "Return ONLY the corrected question — no explanation, no extra text, no punctuation changes beyond what is needed.\n\n"
-        f"Question: {query}\n\n"
-        "Corrected question:"
-    )
-
-
 def build_retrieval_query(messages: list[dict], current_query: str) -> str:
     """
     Return the current query for vector retrieval.
