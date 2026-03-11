@@ -22,7 +22,7 @@ Ask natural-language questions and get synthesised, well-explained answers groun
     ▼                                                      ▼
 ┌───────────────────────────────┐          ┌──────────────────────┐
 │        RAG Chain              │          │  llama.cpp server    │
-│  retrieve → rerank → generate │          │  port 8080           │
+│  retrieve → fuse → generate   │          │  port 8080           │
 └───┬───────────────────────────┘          │  (any GGUF model)    │
     │                                      └──────────────────────┘
     ▼
@@ -33,16 +33,13 @@ Ask natural-language questions and get synthesised, well-explained answers groun
 │        ──► [optional] LLM query rewrite → formal CFR terms       │
 │        ──► BGE embed (w/ prefix) ──► Dense vector ────┐         │
 │        ──► BM25 (fastembed)      ──► Sparse vector ───┤  RRF    │
-│                       (text + table chunks)            └►Qdrant  │
-│                                     BGE-Reranker-base ──►top-5  │
-│                                     (fallback-top1 guard)        │
+│                       (text + table chunks)            └►top-N  │
 │                                     Parent expansion ──► LLM    │
 └──────────────────────────────────────────────────────────────────┘
     │
     ▼
 ┌─────────────────────────────────┐
-│   Qdrant  (port 6333)           │
-│   Collection: ecfr_title21      │
+│   FAISS Index (Local Disk)      │
 │   ~50,000 structural chunks     │
 │   Dense 768-dim + BM25 sparse   │
 └─────────────────────────────────┘
@@ -55,8 +52,8 @@ Ask natural-language questions and get synthesised, well-explained answers groun
 | UI | Vanilla HTML/CSS/JS (served by FastAPI) |
 | Embedding | `BAAI/bge-base-en-v1.5` (768-dim, asymmetric query prefix, LRU-cached) |
 | Sparse search | `fastembed` — `Qdrant/bm25` |
-| Vector DB | Qdrant (hybrid dense + sparse, HNSW, on-disk BM25) |
-| Reranker | `BAAI/bge-reranker-base` (cross-encoder, sigmoid scoring, fallback-top1) |
+| Vector DB | FAISS (IndexFlatIP, on-disk metadata + BM25 sidecar) |
+| Fusion | Client-side Reciprocal Rank Fusion (RRF, k=60) |
 | LLM | llama.cpp server (any GGUF model) |
 | API | FastAPI + uvicorn |
 | Session store | In-memory dict (default) or Redis (opt-in via `REDIS_URL`) |
@@ -81,11 +78,10 @@ Source: `data/ecfr-title-21/ECFR-title21.xml`
 RAG-PhFlow/
 ├── pyproject.toml
 ├── .env                          # local config (copy from .env.example)
-├── docker-compose.yml            # Qdrant service
+├── prompts/system_prompt.txt     # system prompt loaded at runtime
 ├── data/ecfr-title-21/           # source XML + metadata (not in repo)
-│
 ├── src/phflow/
-│   ├── config/settings.py        # Pydantic BaseSettings
+│   ├── settings.py               # Pydantic BaseSettings
 │   ├── ingestion/
 │   │   ├── parser.py             # lxml.iterparse streaming XML parser
 │   │   ├── cleaner.py            # text extraction, table → markdown
@@ -94,19 +90,18 @@ RAG-PhFlow/
 │   │   └── pipeline.py           # ingestion orchestrator
 │   ├── embeddings/encoder.py     # BGE sentence-transformer wrapper + LRU query cache
 │   ├── vectorstore/
-│   │   ├── client.py             # Qdrant client + upsert helpers
-│   │   └── schema.py             # collection + payload index setup
+│   │   ├── client.py             # FAISS client + upsert helpers
+│   │   └── schema.py             # index creation helpers
 │   ├── retrieval/
-│   │   ├── hybrid.py             # dense + sparse RRF → rerank → parent expand
-│   │   ├── reranker.py           # BGE-Reranker-base (cross-encoder, fallback-top1)
-│   │   └── filters.py            # Qdrant Filter builder + auto filter extraction
+│   │   ├── hybrid.py             # dense + sparse RRF → parent expand
+│   │   └── filters.py            # filter predicate builder + auto filter extraction
 │   ├── generation/
 │   │   ├── llm.py                # llama.cpp HTTP client
 │   │   ├── prompts.py            # QA system prompt, query rewrite, adaptive history window
 │   │   ├── citations.py          # context block + source summary formatting
 │   │   └── chain.py              # full RAG pipeline orchestrator
 │   └── api/
-│       ├── main.py               # FastAPI app factory + startup health gate
+│       ├── main.py               # FastAPI app factory + startup lifespan
 │       ├── schemas.py            # Pydantic request/response models
 │       ├── dependencies.py       # FastAPI Depends injectors
 │       ├── session_store.py      # SessionStore abstraction (in-memory + Redis)
@@ -114,7 +109,7 @@ RAG-PhFlow/
 │
 ├── scripts/
 │   ├── ingest.py                 # ingestion CLI
-│   └── verify_collection.py     # spot-check Qdrant after ingest
+│   └── verify_collection.py     # spot-check FAISS after ingest
 ├── tests/
 │   ├── unit/                     # test_chunker.py, test_cleaner.py
 │   ├── integration/
@@ -134,7 +129,6 @@ RAG-PhFlow/
 ### Prerequisites
 
 - Python 3.11+
-- Docker (for Qdrant)
 - llama.cpp installed (`brew install llama.cpp` on macOS, or build from source)
 - A GGUF model file (e.g. `Llama-3.1-8B-Instruct-Q4_K_M.gguf`)
 
@@ -145,15 +139,13 @@ pip install -e ".[ingestion,api]"
 
 # Optional: Redis-backed session persistence
 pip install -e ".[redis]"
+
+# Optional: GPU-accelerated FAISS (via conda, not pip)
+conda install -c pytorch faiss-gpu
 ```
 
-### 2. Start Qdrant
-
-```bash
-docker compose up -d
-```
-
-Qdrant dashboard: http://localhost:6333/dashboard
+### 2. FAISS Index
+FAISS is fully local and runs inside the Python process. No separate vector database server is required. During ingestion, the index is built and saved locally to `faiss_index/`.
 
 ### 3. Start llama.cpp server
 
@@ -197,10 +189,10 @@ Estimated time: ~25 minutes on CPU, ~4 minutes with GPU.
 
 ```bash
 # Production (no reload)
-uvicorn phflow.api.main:app --port 8000
+uvicorn phflow.api.main:app --host 0.0.0.0 --port 8000
 
 # Development (auto-reload on src/ and ui/ changes only)
-uvicorn phflow.api.main:app --reload --reload-dir src --reload-dir ui --port 8000
+uvicorn phflow.api.main:app --reload --reload-dir src --reload-dir ui --host 0.0.0.0 --port 8000
 ```
 
 Open **http://localhost:8000** — the Q&A interface loads in your browser.
@@ -263,7 +255,7 @@ The core insight is that CFR sections are hierarchically labelled — `(a)`, `(b
 
 **Parent text (stored, not embedded)**
 
-The full concatenation of all paragraphs in the section is stored in the Qdrant payload as `parent_text`. It is never embedded. It exists so that, after retrieval identifies the relevant section via its children, the full section text (not just the matching chunk) is fetched and passed to the LLM.
+The full concatenation of all paragraphs in the section is stored in the FAISS payload as `parent_text`. It is never embedded. It exists so that, after retrieval identifies the relevant section via its children, the full section text (not just the matching chunk) is fetched and passed to the LLM.
 
 **Child chunks (embedded)**
 
@@ -328,7 +320,7 @@ BGE-base uses an asymmetric retrieval design: queries and passages are encoded d
 
 Without this prefix, query vectors and chunk vectors occupy different regions of the 768-dim space, degrading retrieval recall by 5–15% on typical BEIR tasks.
 
-Both query and passage vectors are L2-normalised before storage, so cosine similarity reduces to dot product, enabling fast HNSW search.
+Both query and passage vectors are L2-normalised before storage, so cosine similarity reduces to dot product.
 
 **Query vector cache**
 
@@ -338,26 +330,30 @@ Both query and passage vectors are L2-normalised before storage, so cosine simil
 
 ### 5. Indexing
 
-**File:** `src/phflow/vectorstore/schema.py`
+**File:** `src/phflow/vectorstore/client.py`, `src/phflow/vectorstore/schema.py`
 
-**Vector index — Dense (HNSW)**
+**Vector index — Dense (FAISS IndexFlatIP)**
 
 ```
-Distance:       Cosine
+Distance:       Inner product (equivalent to cosine for L2-normalised vectors)
 Dimensions:     768
-HNSW m:         16       (number of edges per node — controls graph connectivity)
-HNSW ef_construct: 200  (beam width during index build — higher = better recall at build cost)
+GPU support:    Auto-detected (faiss-gpu via conda); falls back to CPU
 ```
 
-`m=16` is the standard production setting for HNSW. `ef_construct=200` is 2× the default, chosen because the regulatory corpus has many near-duplicate sections (e.g. Parts 211, 213, 225 share nearly identical text) and higher ef improves graph quality in dense similarity clusters.
+Vectors are L2-normalised at ingestion time, so inner-product search is equivalent to cosine similarity. `IndexFlatIP` provides exact nearest-neighbour search — no approximation error.
 
-**Vector index — Sparse (BM25)**
+**Index file layout**
 
-BM25 sparse vectors are stored on-disk (`on_disk=True`) to avoid memory pressure. The `fastembed` library tokenises chunks using the `Qdrant/bm25` model and encodes them as sparse `{token_id: tf-idf weight}` vectors. These complement dense retrieval by matching on exact regulatory terminology (section numbers, defined terms, chemical names).
+```
+faiss_index/
+├── dense.index       # FAISS binary (always saved as CPU-compatible)
+├── metadata.json     # list[dict] — payload for each vector, aligned by position
+└── bm25_sparse.json  # sparse BM25 vectors: list[{"indices": [...], "values": [...]}]
+```
 
-**Payload fields and indexes**
+**Payload fields**
 
-Every chunk stores a rich metadata payload. The following fields are indexed for `O(log n)` filtered retrieval:
+Every chunk stores a rich metadata payload. Key fields used for filtering:
 
 | Field | Type | Use |
 |---|---|---|
@@ -400,20 +396,27 @@ Before retrieval, the raw query is scanned for explicit filter hints and any det
 
 This improves precision for queries that name a specific Part without the user setting a filter in the API request.
 
-#### 6.2 Optional Query Rewrite
+#### 6.2 Default Part Scope
+
+When no explicit `part_number` filter is present in the query or request, the retriever automatically scopes to `SCOPE_PART_NUMBERS` (default: Parts 210 and 211). This ensures that generic queries about pharmaceutical GMP stay within the core manufacturing regulations without accidentally pulling from unrelated titles.
+
+Setting an explicit `part_number` in the request (or query text) overrides the default scope entirely.
+
+#### 6.3 Optional Query Rewrite
 
 **File:** `src/phflow/generation/prompts.py` → `build_retrieval_rewrite_prompt()`
 
-When `ENABLE_QUERY_REWRITE=true`, a short LLM call (`max_tokens=80`) rewrites colloquial workplace language into formal CFR terminology before the retrieval encode step. For example:
+When `ENABLE_QUERY_REWRITE=true` (the default), a short LLM call (`max_tokens=128`) rewrites colloquial workplace language into formal CFR terminology before the retrieval encode step. For example:
 
 - `"fridge temperature for drugs"` → `"storage temperature requirements for pharmaceutical drug products"`
 - `"sign off on a digital form"` → `"electronic record signature requirements"`
+- `"pallet rejected at dock"` → `"container receipt and acceptance refusal"`
 
-The rewrite only affects the retrieval query. The original question is still shown to the user and used for prompt assembly. This feature is **off by default** (`ENABLE_QUERY_REWRITE=false`) to preserve latency.
+The rewrite only affects the retrieval query. The original question is still shown to the user and used for prompt assembly.
 
-#### 6.3 Hybrid Search (Dense + BM25 via RRF)
+#### 6.4 Hybrid Search (Dense + BM25 via RRF)
 
-Both retrieval signals are computed in parallel and fused natively inside Qdrant using Reciprocal Rank Fusion (RRF):
+Both retrieval signals are computed and fused client-side using Reciprocal Rank Fusion (RRF):
 
 ```
 Query
@@ -422,12 +425,12 @@ Query
   │                                         │
   └─► bm25.query_embed(query)        →  sparse vector
                                             │
-              Qdrant query_points (FusionQuery / RRF)
+              Client-side RRF fusion
               ┌────────────────────────────────────────┐
-              │  Prefetch: dense top-80   score desc   │
-              │  Prefetch: sparse top-80  score desc   │
+              │  FAISS search:  dense top-20            │
+              │  BM25 dot-product: sparse top-20        │
               │                                        │
-              │  RRF merge  →  top-40 candidates      │
+              │  RRF merge  →  top-10 candidates       │
               └────────────────────────────────────────┘
 ```
 
@@ -439,7 +442,7 @@ Dense and BM25 scores exist on incompatible scales. RRF avoids the need to tune 
 RRF(d) = Σ  1 / (k + rank_i(d))
 ```
 
-with `k=60` (Qdrant default). A chunk ranked 1st in both lists gets a higher RRF score than one ranked 5th in both, regardless of the raw score values. This is robust to scale differences and avoids expensive calibration.
+with `k=60`. A chunk ranked 1st in both lists gets a higher RRF score than one ranked 5th in both, regardless of the raw score values. This is robust to scale differences and avoids expensive calibration.
 
 **Authority chunk exclusion**
 
@@ -447,93 +450,58 @@ A permanent filter is AND-ed into every search that excludes `chunk_type="author
 
 **Prefetch limits**
 
-Each prefetch (dense and sparse) fetches `initial_k × PREFETCH_MULTIPLIER` candidates (default `2`, so 80 each). After RRF merge, the top `initial_k = 40` are passed to the reranker. The multiplier is configurable via `PREFETCH_MULTIPLIER` in `.env` to tune the recall/latency tradeoff.
+Each search (dense and sparse) fetches `initial_k × PREFETCH_MULTIPLIER` candidates (default `2`, so 20 each). After RRF merge, the top `initial_k = 10` are passed forward. The multiplier is configurable via `PREFETCH_MULTIPLIER` in `.env` to tune the recall/latency tradeoff.
 
-#### 6.4 Metadata Filtering
+#### 6.5 Metadata Filtering
 
-Any combination of the following filters can be applied pre-search (pushed into the Qdrant `filter` parameter, not post-filtered):
+Filters are implemented as Python callables applied post-FAISS (over-fetch then filter):
 
 | Filter | Field | Example |
 |---|---|---|
 | CFR Part | `part_number` (int) | `part_number=211` |
+| Part scope | `part_numbers` (list) | `part_numbers=[210, 211]` |
 | Chapter | `chapter_number` (keyword) | `chapter_number="I"` |
 | Subpart | `subpart_letter` (keyword) | `subpart_letter="B"` |
-| Chunk type | `chunk_type` (keyword, `MatchAny`) | `chunk_types=["text","table"]` |
+| Chunk type | `chunk_type` (keyword) | `chunk_types=["text","table"]` |
 | Amendment date | `latest_amendment_date` (range) | `amended_after="2020-01-01"` |
 | Has table | `has_table` (bool) | `has_table=True` |
 | Exclude repealed | `is_removed` (bool) | always `is_removed=False` |
 
-Filters are AND-composed. The `is_removed=False` filter is always active to exclude repealed sections.
+The `is_removed=False` filter is always active to exclude repealed sections.
 
 ---
 
-### 7. Reranking
+### 7. Parent Expansion
 
-**File:** `src/phflow/retrieval/reranker.py`
+**File:** `src/phflow/retrieval/hybrid.py` → `HybridRetriever.search()`
 
-**Model:** `BAAI/bge-reranker-base`
+After RRF fusion, the top-N results are individual *chunks* (one paragraph group each). The LLM needs the *full section* for context — a single `(b)` sub-paragraph without its surrounding `(a)` and `(c)` may be ambiguous or incomplete.
 
-A cross-encoder is fundamentally different from a bi-encoder (embedding model). Instead of encoding the query and passage independently and comparing vectors, the cross-encoder sees both together:
+For each unique `section_node` in the top-N results:
 
-```
-[CLS] query [SEP] passage [SEP]  →  single relevance logit
-```
-
-This joint attention over both texts enables much more precise relevance judgement at the cost of not being indexable — it must score every (query, candidate) pair individually.
-
-**Scoring**
-
-```python
-logits = model(**inputs).logits          # shape [batch, 1]
-scores = torch.sigmoid(logits[:, 0])     # → [0, 1] relevance probability
-```
-
-`sigmoid(logit)` converts the raw classification output to a calibrated probability in [0, 1]. A score of 0.5 means the model is uncertain; scores above ~0.6 indicate genuine relevance.
-
-**Threshold filtering with fallback**
-
-Candidates with `score >= reranker_score_threshold` (default `0.25`) are returned, up to `reranker_top_n`. The threshold is intentionally low because the reranker is a general-purpose model and calibrated scores for regulatory content cluster in the 0.3–0.6 range.
-
-If **no** candidate clears the threshold — which can happen when query vocabulary has no overlap with retrieved chunks — the single highest-scoring candidate is returned as a fallback (`fallback_top1=True`). This prevents the reranker from silently emptying the result set and triggering an unnecessary `_INSUFFICIENT` response.
-
-**Batch inference**
-
-All 40 candidates are scored in a single batched call with padding and truncation to `max_length=512`. This is ~8× faster than scoring one pair at a time on CPU.
-
----
-
-### 8. Parent Expansion
-
-**File:** `src/phflow/retrieval/hybrid.py` → `scroll_by_node`
-
-After reranking, the top-5 results are individual *chunks* (one paragraph group each). The LLM needs the *full section* for context — a single `(b)` sub-paragraph without its surrounding `(a)` and `(c)` may be ambiguous or incomplete.
-
-For each unique `section_node` in the reranked results:
-
-1. Scroll all chunks sharing that `section_node` from Qdrant
+1. Scroll all chunks sharing that `section_node` from FAISS metadata
 2. Concatenate their `chunk_text` in `chunk_index` order
-3. Replace the single matched chunk with the full section text
+3. Strip the repeated section header from subsequent chunks (only the first chunk's header is kept)
+4. Replace the single matched chunk with the full assembled section text
 
-This ensures the LLM always receives complete regulatory sections, not fragments. If two reranked chunks share the same section, they are deduplicated — the section is fetched once.
+This ensures the LLM always receives complete regulatory sections, not fragments. If two top-N chunks share the same section, they are deduplicated — the section is fetched once.
 
 ---
 
-### 9. Query Optimisation
+### 8. Query Optimisation
 
 **File:** `src/phflow/generation/prompts.py`, `src/phflow/generation/chain.py`
 
 **Retrieval query**
 
-The user's raw query is passed directly to the retrieval encoder (after optional rewrite — see §6.2). No expansion is performed before retrieval by default.
+The user's raw query is optionally rewritten (see §6.3) before the retrieval encode step. Only the (potentially rewritten) retrieval query is sent to FAISS; the original question is used for prompt assembly.
 
 **Adaptive history window**
 
 The prompt includes conversation history to resolve follow-up references. The window size adapts to the query:
 
-- **Default (`HISTORY_WINDOW = 1`):** last 1 user+assistant turn (2 messages)
+- **Default (`HISTORY_WINDOW = 0`):** no prior turns included (eliminates hallucination risk on fresh queries)
 - **Expanded (2 turns / 4 messages):** automatically activated when the query contains a back-reference pronoun or phrase — `"that"`, `"it"`, `"its"`, `"same"`, `"the section"`, `"the requirement"`, `"previous"`, etc.
-
-This gives the model exactly the disambiguation context it needs for follow-up questions without bloating the prompt for fresh queries.
 
 **Retrieval query isolation**
 
@@ -541,9 +509,11 @@ Prior conversation turns are never concatenated into the retrieval query. Early 
 
 ---
 
-### 10. Prompt Assembly
+### 9. Prompt Assembly
 
 **File:** `src/phflow/generation/prompts.py`, `src/phflow/generation/citations.py`
+
+The system prompt is loaded from `prompts/system_prompt.txt` at runtime (falls back to an inline default if the file is missing).
 
 The assembled prompt has four sections in order:
 
@@ -551,7 +521,7 @@ The assembled prompt has four sections in order:
 INSTRUCTIONS:
 {system_prompt}
 
-CONVERSATION HISTORY:          ← adaptive: 1 turn normally, 2 turns on back-references
+CONVERSATION HISTORY:          ← adaptive: 0 turns normally, 2 turns on back-references
 User: {prior question}
 Assistant: {prior answer}
 
@@ -572,16 +542,18 @@ Answer:
 
 **System prompt rules**
 
-The system prompt (`SYSTEM_PROMPT` in `prompts.py`) enforces six rules:
+The system prompt (`prompts/system_prompt.txt`) enforces eight rules:
 
 | Rule | Behaviour |
 |---|---|
 | Context-only | Every claim must come from the CONTEXT block. No training knowledge. |
 | Insufficient context | If CONTEXT has no relevant information, respond with exactly the standard insufficient-context sentence and nothing else. |
+| No cross-inference | Do not combine or infer definitions across sentences — if a term isn't explicitly defined, refuse to answer. |
 | Partial context | If CONTEXT partially addresses the question, answer from what is available and explicitly state what is missing. |
-| Lengthy context | Distil long contexts — do not reproduce large blocks verbatim. |
+| Operational language | Map warehouse/operational terms to CFR equivalents (pallet→container, leakage→broken seal, etc.). |
 | Answer format | Formal prose paragraphs. No bullets. No CFR section numbers or `[SOURCE N]` labels in the answer body. |
 | Source declaration | Every response must end with `SOURCES_USED: 1, 3` (1-based source indices). This is mandatory. |
+| Output only | No reasoning, no self-corrections, no deliberation, no repetition. |
 
 **Context block format**
 
@@ -595,18 +567,18 @@ Labels are 1-based. The `SOURCES_USED:` declaration at the end of the answer map
 
 ---
 
-### 11. Generation and Output Cleaning
+### 10. Generation and Output Cleaning
 
 **File:** `src/phflow/generation/llm.py`, `src/phflow/generation/chain.py`
 
-#### 11.1 LLM Client (`llm.py`)
+#### 10.1 LLM Client (`llm.py`)
 
 The `LlamaCppClient` posts to the llama.cpp `/completion` endpoint:
 
 ```json
 {
   "prompt":            "...",
-  "n_predict":         2048,
+  "n_predict":         768,
   "temperature":       0.1,
   "top_p":             0.9,
   "n_ctx":             65536,
@@ -618,56 +590,55 @@ The `LlamaCppClient` posts to the llama.cpp `/completion` endpoint:
 }
 ```
 
-**Temperature `0.1`** — near-deterministic. Regulatory answers must be factual, not creative. Low temperature eliminates variance in phrasings of the same factual claim.
+**Temperature `0.1`** — near-deterministic. Regulatory answers must be factual, not creative.
 
 **Repeat penalty** — `repeat_penalty=1.1` with a 256-token look-back window, combined with `frequency_penalty=0.1`, penalises the model for repeating the same token sequences. This prevents two observed failure modes:
-1. The `SOURCES_USED:` line looping indefinitely (model repeats `"211.42, 211.80"` hundreds of times)
+1. The `SOURCES_USED:` line looping indefinitely
 2. The model echoing the question + context back as its answer body
 
-**Stop sequences** — EOS and role tokens across major model families are included (`<|im_end|>`, `</s>`, `<|endoftext|>`, `<|eot_id|>`, etc.) to stop generation cleanly regardless of which model is loaded.
+**Stop sequences** — EOS and role tokens across major model families are included (`<|im_end|>`, `</s>`, `<|endoftext|>`, `<|eot_id|>`, etc.) plus prompt section labels (`INSTRUCTIONS:`, `CONTEXT:`, `QUESTION:`) to stop generation cleanly.
 
-#### 11.2 Output Cleaning (`_clean`)
+#### 10.2 Output Cleaning (`_clean`)
 
-After generation, `_clean()` applies three passes in order:
+After generation, `_clean()` applies multiple passes:
 
-1. **`<think>` block removal** — Regex `re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)` strips reasoning blocks emitted by chain-of-thought models (Qwen3, DeepSeek-R1). These blocks may be empty (`<think>\n</think>`) or contain multi-line reasoning. All occurrences are removed, not just the first.
+1. **`<think>` block removal** — strips reasoning blocks emitted by chain-of-thought models (Qwen3, DeepSeek-R1)
+2. **EOS token stripping** — leaked `<|im_end|>`, `</s>`, etc. are stripped from start and end
+3. **Section-label stripping** — prompt section headers (`INSTRUCTIONS:`, `CONTEXT:`, `QUESTION:`, `Answer:`) echoed by the model are stripped
 
-2. **EOS token stripping** — Leaked `<|im_end|>`, `</s>`, etc. are stripped from the start and end of the output in a loop until none remain.
-
-3. **Section-label stripping** — Prompt section headers (`INSTRUCTIONS:`, `CONTEXT:`, `QUESTION:`, `Answer:`) that the model echoed are stripped from start and end.
-
-#### 11.3 SOURCES_USED Parsing
+#### 10.3 SOURCES_USED Parsing
 
 `_parse_used_sources()` in `chain.py` processes the cleaned answer:
 
-- Scans **top-down** for the **first** `SOURCES_USED:` line. Taking the first occurrence is correct because the model should emit this line once at the end of its answer — any subsequent occurrences are part of a repetition loop and are discarded along with everything after them.
+- Scans **all lines** for `SOURCES_USED:` and takes the **last** occurrence. The last is preferred because without repeat_penalty the model sometimes generates two complete answers; the second is typically better.
 - Matching is **case-insensitive** and accepts both `SOURCES_USED:` and `SOURCES USED:` (space variant emitted by some models)
 - Parses the 1-based source indices (e.g. `"1, 3"`) and maps them to the actual `source_summary` entries
 - Strips the `SOURCES_USED:` line and everything after it from the answer
-- Strips any residual `[SOURCE N]` markers from the answer body
+- Strips any residual `[SOURCE N]` or `Source N` markers from the answer body
 
 ---
 
-### 12. Answer Integrity Guards
+### 11. Answer Integrity Guards
 
 **File:** `src/phflow/generation/chain.py`
 
-After parsing, the answer passes through five guards. Any failure replaces the answer with the standard insufficient-context message and clears sources:
+After parsing, the answer passes through several guards. Any failure replaces the answer with the standard insufficient-context message and clears sources:
 
 | Guard | Condition | Failure mode caught |
 |---|---|---|
-| **No sections** | `not sections` after reranking | Retrieval failure → LLM never called, `_INSUFFICIENT` returned immediately |
+| **No sections** | `not sections` after retrieval | Retrieval failure → LLM never called, `_INSUFFICIENT` returned immediately |
 | **Empty answer** | `not answer` | Model returned nothing after cleaning |
-| **Bare CFR header** | Matches `^21\s+CFR\s+§?\s*[\d.]+…$` | Model echoed a context block label as its entire answer |
+| **Bare CFR header** | Answer matches a section title/number pattern | Model echoed a context block label as its entire answer |
 | **Too short** | `len(answer) < 60` | Parametric one-liner (`"2–8°C"`, `"✘ No."`) from training memory |
-| **Prompt echo** | `"CONTEXT:" in answer` or `"QUESTION:" in answer` | Model reproduced prompt structure in its answer body (catastrophic loop) |
+| **Prompt echo** | `"CONTEXT:"` / `"QUESTION:"` / `"INSTRUCTIONS:"` in answer | Model reproduced prompt structure in its answer body |
 | **Template placeholder** | `"[fill in"` / `"[insert"` / `"[answer here"` in answer | Model produced a fill-in-the-blank stub instead of a real answer |
+| **Reasoning leak** | `"<think>"` in answer | Chain-of-thought reasoning leaked into the output body |
 
-The **no-sections short-circuit** is critical: when the reranker filters out all candidates (common when the query vocabulary has no overlap with any retrieved section), the LLM must not be called. Without this guard, the LLM receives `"No relevant regulatory sections found."` as its context and hallucinates a confident answer from training memory.
+The **no-sections short-circuit** is critical: when all retrieved chunks are filtered out, the LLM must not be called. Without this guard, the LLM receives `"No relevant regulatory sections found."` as its context and hallucinates a confident answer from training memory.
 
 ---
 
-### 13. Session Management
+### 12. Session Management
 
 **File:** `src/phflow/api/session_store.py`
 
@@ -680,13 +651,15 @@ Sessions persist the conversation history (`user` + `assistant` message pairs) a
 
 The API selects the backend automatically at startup. If `REDIS_URL` is set but Redis is unreachable, it falls back to in-memory silently.
 
+Both backends trim history to `SESSION_MAX_MESSAGES` (default: 100) to prevent unbounded memory growth.
+
 **Streaming and session history**
 
-Both streaming and non-streaming responses now save the full conversation turn to the session store after completion. Streaming responses include an `X-Session-Id` response header so clients can continue the session.
+Both streaming and non-streaming responses save the full conversation turn to the session store after completion. Streaming responses include an `X-Session-Id` response header so clients can continue the session.
 
 ---
 
-### 14. Per-Query Debug Logging
+### 13. Per-Query Debug Logging
 
 **File:** `src/phflow/utils/query_logger.py`
 
@@ -701,15 +674,15 @@ Each file captures (in order):
 1. Original query
 2. Retrieval query (after rewrite, if enabled)
 3. Auto-extracted filters (if any were detected)
-4. Pre-rerank candidates: section number, title, RRF score (top 40)
-5. Post-rerank results: section number, title, reranker probability (top 5)
-6. Sections passed to LLM: section number, title, reranker score, full_text char count
+4. Applied scope (if default scope was used)
+5. Retrieval candidates: section number, title, RRF score (top-N)
+6. Sections passed to LLM: section number, title, RRF score, full_text char count
 7. Assembled prompt — stored as an **array of lines** for readability
 8. Raw LLM output — stored as an **array of lines** for readability
 9. Final answer — stored as an **array of lines** for readability
 10. Sources declared by LLM
 
-Structured JSON enables aggregate analysis (e.g. "what % of queries had 0 sections after reranking?") and is readable in any JSON viewer or text editor.
+Structured JSON enables aggregate analysis (e.g. "what % of queries had 0 sections after retrieval?") and is readable in any JSON viewer or text editor.
 
 ---
 
@@ -724,7 +697,7 @@ GET /health
 {
   "status": "ok",
   "components": {
-    "qdrant": {"status": "ok"},
+    "faiss": {"status": "ok"},
     "llama_cpp": {"status": "ok"},
     "encoder": {"status": "ok"}
   }
@@ -798,21 +771,22 @@ All settings are in `.env` (see `.env.example`):
 | Variable | Default | Description |
 |---|---|---|
 | `EMBEDDING_MODEL` | `BAAI/bge-base-en-v1.5` | Sentence-transformer model |
-| `EMBEDDING_DEVICE` | `cpu` | `cpu`, `cuda`, or `mps` |
-| `QDRANT_URL` | `http://localhost:6333` | Qdrant server URL |
-| `COLLECTION_NAME` | `ecfr_title21` | Qdrant collection |
+| `EMBEDDING_DEVICE` | `cuda` | `cpu`, `cuda`, or `mps` (auto-falls back to cpu) |
+| `EMBEDDING_BATCH_SIZE` | `64` | Batch size for ingestion encoding |
+| `FAISS_INDEX_DIR` | `faiss_index` | Directory for FAISS index files |
 | `LLAMA_CPP_URL` | `http://localhost:8080` | llama.cpp server URL |
 | `LLAMA_CPP_TEMPERATURE` | `0.1` | LLM temperature (low = factual) |
 | `LLAMA_CPP_NUM_CTX` | `65536` | Context window — must match `-c` on llama-server |
-| `LLAMA_CPP_MAX_TOKENS` | `2048` | Max response tokens |
-| `RERANKER_MODEL` | `BAAI/bge-reranker-base` | Cross-encoder reranker |
-| `INITIAL_RETRIEVAL_K` | `40` | Candidates before reranking |
-| `RERANKER_TOP_N` | `5` | Sections passed to LLM |
-| `RERANKER_SCORE_THRESHOLD` | `0.25` | Min reranker yes-probability (filters weak matches) |
-| `PREFETCH_MULTIPLIER` | `2` | Qdrant prefetch = `initial_k × multiplier` per branch |
-| `ENABLE_QUERY_REWRITE` | `false` | Rewrite colloquial queries to CFR terminology before retrieval |
+| `LLAMA_CPP_MAX_TOKENS` | `768` | Max response tokens |
+| `INITIAL_RETRIEVAL_K` | `10` | Candidates after RRF fusion |
+| `RETRIEVAL_TOP_N` | `5` | Sections passed to LLM |
+| `PREFETCH_MULTIPLIER` | `2` | Over-fetch factor per search branch before RRF |
+| `ENABLE_QUERY_REWRITE` | `true` | Rewrite colloquial queries to CFR terminology before retrieval |
+| `SCOPE_PART_NUMBERS` | `[210, 211]` | Default CFR parts to scope retrieval when no explicit part filter |
 | `REDIS_URL` | _(unset)_ | Redis URL for persistent sessions (e.g. `redis://localhost:6379`) |
 | `CHUNK_MAX_TOKENS` | `512` | Overflow guard for structural chunking |
+| `XML_PATH` | `data/ecfr-title-21/ECFR-title21.xml` | Source XML location |
+| `VERSIONS_PATH` | `data/ecfr-title-21/versions-title-21.json` | Amendment versions JSON |
 
 ---
 
@@ -828,10 +802,10 @@ pip install -e ".[redis]"
 # Run unit tests
 pytest tests/unit/
 
-# Run retrieval quality evaluation (requires Qdrant + models running)
+# Run retrieval quality evaluation (requires FAISS index + models running)
 pytest tests/eval/ -m integration -v
 
-# Run all tests (requires Qdrant + llama.cpp running)
+# Run all tests (requires FAISS + llama.cpp running)
 pytest tests/
 
 # Lint

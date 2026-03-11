@@ -15,12 +15,11 @@ class Settings(BaseSettings):
 
     # Embedding
     embedding_model: str = "BAAI/bge-base-en-v1.5"
-    embedding_device: str = "cpu"
+    embedding_device: str = "cuda"
     embedding_batch_size: int = 64
 
-    # Qdrant
-    qdrant_url: str = "http://localhost:6333"
-    collection_name: str = "ecfr_title21"
+    # FAISS
+    faiss_index_dir: str = "faiss_index"
 
     # llama.cpp server (scheme is added automatically if missing)
     llama_cpp_url: str = "http://localhost:8080"
@@ -29,8 +28,9 @@ class Settings(BaseSettings):
     llama_cpp_max_tokens: int = 768
     llama_cpp_repeat_penalty: float = 1.1
     llama_cpp_repeat_last_n: int = 256
-    llama_cpp_frequency_penalty: float = 0.1
-
+    llama_cpp_frequency_penalty: float = 0.1  # penalise tokens proportional to their frequency
+    llama_cpp_top_p: float = 0.9              # nucleus sampling threshold
+    llama_cpp_query_rewrite_tokens: int = 128 # token budget for query rewrite (one sentence)
     # Sessions
     session_max_messages: int = 100
 
@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     prefetch_multiplier: int = 2
     enable_query_rewrite: bool = True
     redis_url: str | None = None
-    cors_origins: list[str] = ["http://localhost:8000", "http://127.0.0.1:8000"]
+    cors_origins: list[str] = ["*"]
     scope_part_numbers: list[int] = [210, 211]
 
     # Chunking

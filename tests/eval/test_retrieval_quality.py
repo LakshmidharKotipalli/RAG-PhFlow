@@ -1,7 +1,7 @@
 """
 Retrieval quality evaluation against a golden set.
 
-Requires running Qdrant + embedding model. Run with:
+Requires FAISS index + embedding model. Run with:
     pytest tests/eval/ -m integration -v
 
 Reports Mean Precision@5 and Mean Recall@5 over the golden set.
@@ -27,32 +27,24 @@ def golden_set() -> list[dict]:
 def retriever():
     """Build a real HybridRetriever. Skips if infrastructure is unavailable."""
     try:
-        from phflow.config.settings import settings
+        from phflow.settings import settings
         from phflow.embeddings.encoder import RegulationEncoder
         from phflow.retrieval.hybrid import HybridRetriever
-        from phflow.retrieval.reranker import Reranker
-        from phflow.vectorstore.client import get_qdrant_client
+        from phflow.vectorstore.client import get_faiss_store
 
         encoder = RegulationEncoder(
             model_name=settings.embedding_model,
             device=settings.embedding_device,
         )
-        reranker = Reranker(
-            model_name=settings.reranker_model,
-            device=settings.embedding_device,
-        )
-        qdrant = get_qdrant_client()
-        # Quick connectivity check
-        qdrant.get_collections()
+        store = get_faiss_store(dim=encoder.embedding_dim)
+
+        if store.total_points == 0:
+            pytest.skip("FAISS index is empty — run ingest.py first")
 
         return HybridRetriever(
-            qdrant=qdrant,
-            collection_name=settings.collection_name,
+            store=store,
             encoder=encoder,
-            reranker=reranker,
             initial_k=settings.initial_retrieval_k,
-            reranker_top_n=settings.reranker_top_n,
-            reranker_score_threshold=settings.reranker_score_threshold,
         )
     except Exception as exc:
         pytest.skip(f"Infrastructure unavailable: {exc}")

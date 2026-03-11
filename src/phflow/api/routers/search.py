@@ -9,7 +9,6 @@ from phflow.api.schemas import PartInfo, SearchRequest, SearchResponse, SourceRe
 from phflow.settings import settings
 from phflow.retrieval.filters import build_filter
 from phflow.retrieval.hybrid import HybridRetriever
-from phflow.vectorstore.client import scroll_by_node
 
 router = APIRouter(prefix="/api/v1", tags=["search"])
 
@@ -34,7 +33,7 @@ async def search(
     explicit_part = req.filters.part_number
     scope = settings.scope_part_numbers if not explicit_part else None
 
-    qdrant_filter = build_filter(
+    search_filter = build_filter(
         part_number=explicit_part,
         part_numbers=scope or None,
         chapter_number=req.filters.chapter_number,
@@ -46,7 +45,7 @@ async def search(
 
     sections = retriever.search(
         query=req.query,
-        qdrant_filter=qdrant_filter,
+        search_filter=search_filter,
         expand_to_parent=req.expand_to_parent,
         top_n=req.top_k,
     )
@@ -76,12 +75,12 @@ async def get_section(
     section_node: str,
     retriever: HybridRetriever = Depends(get_retriever),
 ) -> dict:
-    chunks = scroll_by_node(retriever.qdrant, retriever.collection_name, section_node)
+    chunks = retriever.store.scroll_by_node(section_node)
     if not chunks:
         raise HTTPException(status_code=404, detail=f"Section '{section_node}' not found")
 
-    first = chunks[0].payload
-    full_text = "\n\n".join(c.payload.get("chunk_text", "") for c in chunks)
+    first = chunks[0]["payload"]
+    full_text = "\n\n".join(c["payload"].get("chunk_text", "") for c in chunks)
 
     return {
         "section_node": section_node,
@@ -105,38 +104,22 @@ async def get_section(
 @router.get("/parts", response_model=list[PartInfo])
 async def list_parts(retriever: HybridRetriever = Depends(get_retriever)) -> list[PartInfo]:
     """Return distinct parts for use in filter UI dropdowns."""
-    from qdrant_client.models import FieldCondition, Filter, MatchValue
-
-    # Scroll text chunks only, one per part, to build the parts list
     seen_parts: dict[int, PartInfo] = {}
-    offset = None
 
-    while True:
-        results, next_offset = retriever.qdrant.scroll(
-            collection_name=retriever.collection_name,
-            scroll_filter=Filter(
-                must=[FieldCondition(key="chunk_index", match=MatchValue(value=0)),
-                      FieldCondition(key="chunk_type", match=MatchValue(value="text"))]
-            ),
-            with_payload=True,
-            with_vectors=False,
-            limit=1000,
-            offset=offset,
-        )
+    all_results = retriever.store.scroll(
+        filter_fn=lambda p: p.get("chunk_index") == 0 and p.get("chunk_type") == "text",
+        limit=100_000,
+    )
 
-        for point in results:
-            p = point.payload
-            pnum = p.get("part_number")
-            if pnum and pnum not in seen_parts:
-                seen_parts[pnum] = PartInfo(
-                    part_number=pnum,
-                    part_name=p.get("part_name", ""),
-                    chapter_number=p.get("chapter_number", ""),
-                    chapter_name=p.get("chapter_name", ""),
-                )
-
-        if next_offset is None:
-            break
-        offset = next_offset
+    for item in all_results:
+        p = item["payload"]
+        pnum = p.get("part_number")
+        if pnum and pnum not in seen_parts:
+            seen_parts[pnum] = PartInfo(
+                part_number=pnum,
+                part_name=p.get("part_name", ""),
+                chapter_number=p.get("chapter_number", ""),
+                chapter_name=p.get("chapter_name", ""),
+            )
 
     return sorted(seen_parts.values(), key=lambda x: x.part_number)

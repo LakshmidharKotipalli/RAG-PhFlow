@@ -6,7 +6,7 @@ root. Each file records every step of the RAG pipeline:
   1. Original query
   2. Retrieval query (after optional rewrite)
   3. Auto-extracted filters (if any)
-  4. Qdrant retrieval candidates (pre-rerank)
+  4. FAISS retrieval candidates (pre-rerank)
   5. Reranked results (post-rerank, with scores)
   6. Sections passed to LLM
   7. Assembled prompt

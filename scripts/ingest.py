@@ -27,11 +27,11 @@ logging.basicConfig(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Ingest ECFR Title 21 XML into Qdrant")
+    parser = argparse.ArgumentParser(description="Ingest ECFR Title 21 XML into FAISS")
     parser.add_argument(
         "--reset",
         action="store_true",
-        help="Drop and recreate the Qdrant collection before ingestion",
+        help="Drop and recreate the FAISS index before ingestion",
     )
     parser.add_argument(
         "--batch-size",

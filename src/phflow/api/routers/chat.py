@@ -5,7 +5,6 @@ import re
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
-from qdrant_client.http.exceptions import ResponseHandlingException
 
 from phflow.api.dependencies import get_chain, get_session_store
 from phflow.api.routers.search import _confidence_label
@@ -51,10 +50,10 @@ async def _handle_chat(
                 "LLAMA_CPP_NUM_CTX / raise the server timeout."
             ),
         )
-    except (ResponseHandlingException, httpx.ConnectError):
+    except (httpx.ConnectError, ConnectionError, OSError):
         raise HTTPException(
             status_code=503,
-            detail="A backend service is unavailable. Ensure Qdrant (docker compose up -d) and llama-server are running.",
+            detail="A backend service is unavailable. Ensure llama-server is running.",
         )
 
     # Update session history and persist

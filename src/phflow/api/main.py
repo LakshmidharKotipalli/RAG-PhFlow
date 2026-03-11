@@ -1,7 +1,7 @@
 """
 FastAPI application factory with lifespan-managed component initialization.
 
-All heavy components (encoder, Qdrant client, llama.cpp client) are
+All heavy components (encoder, FAISS store, llama.cpp client) are
 initialized once at startup and shared via app.state.
 """
 
@@ -17,9 +17,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-# Absolute path to ui/ — safe regardless of working directory
-_UI_DIR = Path(__file__).parents[3] / "ui"
-
 from phflow.api.routers import chat, health, search
 from phflow.api.session_store import make_session_store
 from phflow.settings import settings
@@ -28,9 +25,12 @@ from phflow.generation.chain import RAGChain
 from phflow.generation.llm import LlamaCppClient
 from phflow.retrieval.hybrid import HybridRetriever
 
-from phflow.vectorstore.client import get_qdrant_client
+from phflow.vectorstore.client import get_faiss_store
 
 logger = logging.getLogger(__name__)
+
+# Absolute path to ui/ — safe regardless of working directory
+_UI_DIR = Path(__file__).parents[3] / "ui"
 
 
 @asynccontextmanager
@@ -45,11 +45,9 @@ async def lifespan(app: FastAPI):
     )
     logger.info("Encoder loaded: %s (dim=%d)", settings.embedding_model, encoder.embedding_dim)
 
-
-
-    # Qdrant
-    qdrant = get_qdrant_client()
-    logger.info("Qdrant connected: %s", settings.qdrant_url)
+    # FAISS vector store
+    store = get_faiss_store(dim=encoder.embedding_dim)
+    logger.info("FAISS store loaded: %d vectors from %s", store.total_points, settings.faiss_index_dir)
 
     # llama.cpp server
     llm = LlamaCppClient()
@@ -63,8 +61,7 @@ async def lifespan(app: FastAPI):
 
     # Retriever
     retriever = HybridRetriever(
-        qdrant=qdrant,
-        collection_name=settings.collection_name,
+        store=store,
         encoder=encoder,
     )
 
@@ -78,8 +75,7 @@ async def lifespan(app: FastAPI):
 
     # Store in app state for dependency injection
     app.state.encoder = encoder
-
-    app.state.qdrant = qdrant
+    app.state.store = store
     app.state.llm = llm
     app.state.retriever = retriever
     app.state.chain = chain

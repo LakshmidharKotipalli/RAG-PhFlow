@@ -5,12 +5,18 @@ Model: BAAI/bge-base-en-v1.5
   - 768-dim, 512-token context
   - Asymmetric: queries use an instruction prefix for better retrieval relevance
   - Trained on broad English corpus; strong on factual/regulatory retrieval (BEIR benchmarks)
-  - Drop-in replacement for PubMedBERT — same 768-dim, no Qdrant schema change needed
+
+GPU acceleration:  The encoder attempts to use CUDA by default.  If no GPU
+is available or the CUDA init fails, it falls back to CPU and logs a warning.
 """
 
 from __future__ import annotations
 
+import logging
+
 from sentence_transformers import SentenceTransformer
+
+logger = logging.getLogger(__name__)
 
 # BGE instruction prefix for query-side encoding (improves retrieval alignment)
 _BGE_QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
@@ -21,16 +27,52 @@ _QUERY_CACHE: dict[str, list[float]] = {}
 _QUERY_CACHE_MAX = 256
 
 
+def _resolve_device(requested: str) -> str:
+    """
+    Resolve the embedding device, preferring GPU with CPU fallback.
+
+    If ``requested`` is ``"cuda"`` but no CUDA device is available,
+    falls back to ``"cpu"`` and logs a warning.
+    """
+    if requested in ("cuda", "gpu"):
+        try:
+            import torch
+            if torch.cuda.is_available():
+                logger.info("Embedding device: CUDA GPU detected — using GPU")
+                return "cuda"
+            else:
+                logger.warning(
+                    "Embedding device: CUDA requested but no GPU available — "
+                    "falling back to CPU"
+                )
+                return "cpu"
+        except ImportError:
+            logger.warning(
+                "Embedding device: CUDA requested but torch not installed — "
+                "falling back to CPU"
+            )
+            return "cpu"
+    return requested
+
+
 class RegulationEncoder:
     def __init__(
         self,
         model_name: str = "BAAI/bge-base-en-v1.5",
-        device: str = "cpu",
+        device: str = "cuda",
         batch_size: int = 64,
     ) -> None:
-        self.model = SentenceTransformer(model_name, device=device)
+        self._requested_device = device
+        self.device = _resolve_device(device)
+        self.model = SentenceTransformer(model_name, device=self.device)
         self.batch_size = batch_size
         self.embedding_dim = self.model.get_sentence_embedding_dimension()
+        logger.info(
+            "RegulationEncoder ready: model=%s, dim=%d, device=%s",
+            model_name,
+            self.embedding_dim,
+            self.device,
+        )
 
     def encode_passages(self, texts: list[str], show_progress: bool = True) -> list[list[float]]:
         """Encode passage texts (document side) — no prefix applied."""

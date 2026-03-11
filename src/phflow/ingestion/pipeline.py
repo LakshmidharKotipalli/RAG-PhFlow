@@ -8,7 +8,8 @@ Execution order:
   4. Chunk each section into paragraph-group chunks
   5. Batch-encode dense vectors (sentence-transformers)
   6. Batch-encode sparse vectors (fastembed BM25)
-  7. Upsert batches into Qdrant
+  7. Add batches to FAISS index + metadata store
+  8. Save FAISS index to disk
 """
 
 from __future__ import annotations
@@ -18,7 +19,6 @@ import logging
 from pathlib import Path
 
 from fastembed import SparseTextEmbedding
-from qdrant_client.models import SparseVector
 from tqdm import tqdm
 
 from phflow.settings import settings
@@ -26,8 +26,8 @@ from phflow.embeddings.encoder import RegulationEncoder
 from phflow.ingestion.chunker import Chunk, build_parent_text, chunk_section, count_tokens
 from phflow.ingestion.metadata import enrich_with_version, load_versions
 from phflow.ingestion.parser import SectionData, parse_sections
-from phflow.vectorstore.client import build_point, get_qdrant_client, upsert_batch
-from phflow.vectorstore.schema import collection_exists, create_collection
+from phflow.vectorstore.client import get_faiss_store
+from phflow.vectorstore.schema import create_index, index_exists
 
 logger = logging.getLogger(__name__)
 
@@ -81,8 +81,8 @@ def run_ingestion(
     Args:
         xml_path: Path to ECFR XML. Defaults to settings.xml_file.
         versions_path: Path to versions JSON. Defaults to settings.versions_file.
-        reset: If True, drop and recreate the Qdrant collection first.
-        ingest_batch_size: Number of chunks per upsert batch.
+        reset: If True, drop and recreate the FAISS index first.
+        ingest_batch_size: Number of chunks per batch.
 
     Returns:
         Stats dict with sections_processed, chunks_created, errors.
@@ -101,16 +101,16 @@ def run_ingestion(
         batch_size=settings.embedding_batch_size,
     )
     sparse_model = SparseTextEmbedding(model_name="Qdrant/bm25")
-    qdrant = get_qdrant_client()
+    store = get_faiss_store(dim=encoder.embedding_dim)
 
-    # Collection setup
-    if reset and collection_exists(qdrant, settings.collection_name):
-        logger.info("Dropping existing collection '%s'", settings.collection_name)
-        qdrant.delete_collection(settings.collection_name)
+    # Index setup
+    if reset and index_exists(store):
+        logger.info("Dropping existing FAISS index at '%s'", settings.faiss_index_dir)
+        create_index(store)
 
-    if not collection_exists(qdrant, settings.collection_name):
-        logger.info("Creating collection '%s' (dim=%d)", settings.collection_name, encoder.embedding_dim)
-        create_collection(qdrant, settings.collection_name, encoder.embedding_dim)
+    if not index_exists(store):
+        logger.info("Creating FAISS index (dim=%d) at '%s'", encoder.embedding_dim, settings.faiss_index_dir)
+        create_index(store)
 
     # Accumulation buffers for batching
     pending_chunks: list[Chunk] = []
@@ -128,19 +128,28 @@ def run_ingestion(
             dense_vecs = encoder.encode_passages(texts, show_progress=False)
             sparse_vecs = list(sparse_model.embed(texts))
 
-            points = []
-            for chunk, dense, sparse, section, vmeta in zip(
-                chunks, dense_vecs, sparse_vecs, sections_map, vmetas
+            payloads = []
+            sparse_data_list = []
+            for chunk, sparse, section, vmeta in zip(
+                chunks, sparse_vecs, sections_map, vmetas
             ):
                 total_chunks = sum(1 for c in chunks if c.section_node == chunk.section_node)
-                sv = SparseVector(indices=sparse.indices.tolist(), values=sparse.values.tolist())
                 payload = _build_payload(section, chunk, vmeta, total_chunks)
-                points.append(build_point(chunk.text, dense, sv, payload))
+                payload["chunk_text"] = chunk.text
+                payloads.append(payload)
+                sparse_data_list.append({
+                    "indices": sparse.indices.tolist(),
+                    "values": sparse.values.tolist(),
+                })
 
-            upsert_batch(qdrant, settings.collection_name, points)
-            stats["chunks_created"] += len(points)
+            store.add(
+                dense_vectors=dense_vecs,
+                payloads=payloads,
+                sparse_data=sparse_data_list,
+            )
+            stats["chunks_created"] += len(payloads)
         except Exception as exc:
-            logger.error("Batch upsert failed: %s", exc)
+            logger.error("Batch add failed: %s", exc)
             stats["errors"] += 1
 
     logger.info("Streaming XML from %s", xml_path)
@@ -175,6 +184,9 @@ def run_ingestion(
 
     # Flush remaining
     flush_batch(pending_chunks, pending_sections, pending_version_metas)
+
+    # Persist to disk
+    store.save()
 
     logger.info(
         "Ingestion complete: %d sections, %d chunks, %d errors",

@@ -4,9 +4,9 @@ import logging
 
 from fastapi import APIRouter, Request
 
-logger = logging.getLogger(__name__)
-
 from phflow.api.schemas import ComponentHealth, HealthResponse
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["health"])
 
@@ -15,14 +15,17 @@ router = APIRouter(tags=["health"])
 async def health_check(request: Request) -> HealthResponse:
     components: dict[str, ComponentHealth] = {}
 
-    # Check Qdrant
+    # Check FAISS store
     try:
-        qdrant = request.app.state.qdrant
-        info = qdrant.get_collections()
-        components["qdrant"] = ComponentHealth(status="ok")
+        store = request.app.state.store
+        n = store.total_points
+        components["faiss"] = ComponentHealth(
+            status="ok" if n > 0 else "error",
+            detail=f"{n} vectors loaded" if n > 0 else "FAISS index is empty",
+        )
     except Exception as exc:
-        logger.warning("Qdrant health check failed: %s", exc)
-        components["qdrant"] = ComponentHealth(status="error", detail="Qdrant unreachable")
+        logger.warning("FAISS health check failed: %s", exc)
+        components["faiss"] = ComponentHealth(status="error", detail="FAISS store unavailable")
 
     # Check llama.cpp server
     try:

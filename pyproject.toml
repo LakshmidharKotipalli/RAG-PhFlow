@@ -18,7 +18,7 @@ ingestion = [
     "lxml>=5.0",
     "sentence-transformers>=3.0",
     "fastembed>=0.4",
-    "qdrant-client>=1.9",
+    "faiss-cpu>=1.7",
     "tiktoken>=0.7",
     "tqdm>=4.66",
 ]
@@ -26,7 +26,7 @@ api = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
     "httpx>=0.27",
-    "qdrant-client>=1.9",
+    "faiss-cpu>=1.7",
     "sentence-transformers>=3.0",
     "fastembed>=0.4",
     "tiktoken>=0.7",
@@ -46,6 +46,9 @@ dev = [
 redis = [
     "redis>=5.0",
 ]
+# NOTE: For GPU-accelerated FAISS, install via conda instead of pip:
+#   conda install -c pytorch faiss-gpu
+# The code auto-detects GPU availability and falls back to CPU.
 all = [
     "phflow[ingestion,api,ui,dev]",
 ]
@@ -56,7 +59,7 @@ where = ["src"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-markers = ["integration: requires running Qdrant, llama.cpp, and model files"]
+markers = ["integration: requires FAISS index, llama.cpp, and model files"]
 
 [tool.ruff]
 line-length = 100

@@ -23,13 +23,6 @@ from phflow.retrieval.hybrid import HybridRetriever
 from phflow.utils.query_logger import QueryLogger
 
 
-# Matches a bare CFR section header echo, e.g. "21 CFR § 117.3 — § 117.3 Definitions."
-# These are degenerate answers where the LLM echoed a context block header.
-_BARE_HEADER_RE = re.compile(
-    r"^21\s+CFR\s+§?\s*[\d.]+(\s*[\u2014\-]\s*.+)?\.?$",
-    re.IGNORECASE,
-)
-
 _INSUFFICIENT = (
     "The provided context does not contain sufficient information "
     "to answer this question."
@@ -161,11 +154,12 @@ class RAGChain:
             clean_query,
             {
                 "part_number": part_number,
+                "section_number": None,
                 "chapter_number": chapter_number,
                 "amended_after": amended_after,
             },
         )
-        if filter_kwargs != {"part_number": part_number, "chapter_number": chapter_number, "amended_after": amended_after}:
+        if filter_kwargs != {"part_number": part_number, "section_number": None, "chapter_number": chapter_number, "amended_after": amended_after}:
             qlog.log("AUTO-EXTRACTED FILTERS", filter_kwargs)
 
         explicit_part = filter_kwargs["part_number"]
@@ -173,9 +167,10 @@ class RAGChain:
         if scope:
             qlog.log("APPLIED SCOPE", {"scope_part_numbers": scope})
 
-        qdrant_filter = build_filter(
+        search_filter = build_filter(
             part_number=explicit_part,
             part_numbers=scope or None,
+            section_number=filter_kwargs.get("section_number"),
             chapter_number=filter_kwargs["chapter_number"],
             amended_after=filter_kwargs["amended_after"],
             exclude_removed=True,
@@ -185,7 +180,7 @@ class RAGChain:
         pipeline_steps.append("Retrieving relevant regulatory sections")
         sections = self.retriever.search(
             query=retrieval_query,
-            qdrant_filter=qdrant_filter,
+            search_filter=search_filter,
             expand_to_parent=expand_to_parent,
             logger=qlog,
         )
@@ -247,12 +242,39 @@ class RAGChain:
         if answer.startswith(q_stripped):
             answer = answer[len(q_stripped):].strip()
 
+        # Check if the answer is just an echoed section header
+        is_bare_header = False
+        answer_stripped = answer.strip()
+        answer_lower = answer_stripped.lower()
+        
+        for s in sections:
+            title = s.get("section_title", "").strip().lower()
+            num = s.get("section_number", "").strip().lower()
+            clean_title = title.replace(num, "").strip() if num else title
+            
+            # Reconstruct the headers the LLM saw in the context block
+            header_candidates = [
+                title,
+                f"21 cfr {num} \u2014 {title}",
+                f"21 cfr {num} - {title}",
+                f"21 cfr {num} \u2014 {clean_title}",
+                f"21 cfr {num} - {clean_title}",
+                f"21 cfr {title}"
+            ]
+            
+            for candidate in header_candidates:
+                # If the answer perfectly mimics the header or is a substring of it
+                if answer_lower == candidate or (answer_lower in candidate and len(answer_lower) > 20):
+                    is_bare_header = True
+                    break
+            if is_bare_header:
+                break
+
         # Degenerate answer guards
-        answer_lower = answer.lower()
         if (
             not answer
-            or _BARE_HEADER_RE.match(answer.strip())
-            or len(answer.strip()) < _MIN_ANSWER_LENGTH
+            or is_bare_header
+            or len(answer_stripped) < _MIN_ANSWER_LENGTH
             or any(sig in answer for sig in _PROMPT_ECHO_SIGNALS)
             or any(sig in answer_lower for sig in _TEMPLATE_SIGNALS)
             or "<think>" in answer_lower

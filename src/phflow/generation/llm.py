@@ -45,6 +45,8 @@ class LlamaCppClient:
         self.repeat_penalty = settings.llama_cpp_repeat_penalty
         self.repeat_last_n = settings.llama_cpp_repeat_last_n
         self.frequency_penalty = settings.llama_cpp_frequency_penalty
+        self.top_p = settings.llama_cpp_top_p
+        self.query_rewrite_tokens = settings.llama_cpp_query_rewrite_tokens
         self._client = httpx.AsyncClient(timeout=timeout)
 
     # EOS / role tokens sent to llama.cpp as stop sequences.
@@ -70,6 +72,7 @@ class LlamaCppClient:
         "\nQUESTION:",
         "\nINSTRUCTIONS:",
         "\nCONVERSATION HISTORY:",
+        "<think>",  # stop before reasoning models enter chain-of-thought
     ]
 
     def _payload(self, prompt: str, stream: bool) -> dict:
@@ -77,7 +80,7 @@ class LlamaCppClient:
             "prompt": prompt,
             "n_predict": self.max_tokens,
             "temperature": self.temperature,
-            "top_p": 0.9,
+            "top_p": self.top_p,
             "n_ctx": self.num_ctx,
             "stream": stream,
             "stop": self._EOS_TOKENS + self._ECHO_STOP_SEQUENCES,
@@ -90,13 +93,31 @@ class LlamaCppClient:
 
     @classmethod
     def _clean(cls, text: str) -> str:
-        """Strip leaked EOS tokens, section-label tokens, and reasoning blocks."""
+        """Strip leaked EOS tokens, section-label tokens, and reasoning blocks.
+
+        Also truncates everything after the first complete SOURCES_USED line
+        to prevent the model from duplicating its answer.
+        """
         result = text.strip()
 
         # Remove <think>...</think> reasoning blocks emitted by reasoning models
         # (e.g. Qwen3, DeepSeek-R1).  The blocks may span multiple lines and
         # may be empty.  Strip all occurrences, not just the first.
         result = re.sub(r"<think>.*?</think>", "", result, flags=re.DOTALL).strip()
+
+        # Strip unclosed <think> blocks (model started thinking but got
+        # cut off by the stop sequence before emitting </think>).
+        result = re.sub(r"<think>.*", "", result, flags=re.DOTALL).strip()
+
+        # Truncate after the first complete SOURCES_USED line to prevent
+        # the model from duplicating its entire answer.
+        sources_match = re.search(
+            r"(SOURCES_USED:\s*(?:none|[\d,\s]+))\s*$",
+            result,
+            flags=re.MULTILINE,
+        )
+        if sources_match:
+            result = result[: sources_match.end()].strip()
 
         # Strip EOS / section-label tokens from the start and end.
         changed = True
@@ -118,7 +139,7 @@ class LlamaCppClient:
         Falls back to the original if the corrected result is empty.
         """
         payload = self._payload(prompt, stream=False)
-        payload["n_predict"] = 128   # one sentence is enough
+        payload["n_predict"] = self.query_rewrite_tokens
         resp = await self._client.post(
             f"{self.base_url}/completion",
             json=payload,

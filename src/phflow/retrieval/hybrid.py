@@ -1,74 +1,158 @@
 """
-Hybrid search: dense + BM25 sparse retrieval fused with Reciprocal Rank Fusion (RRF)
-via Qdrant's native hybrid query API.
+Hybrid search: dense (FAISS) + BM25 sparse retrieval fused with
+Reciprocal Rank Fusion (RRF), implemented client-side.
 
 Flow:
-  1. Encode query -> dense vector (BGE, with instruction prefix) + sparse vector (BM25)
-  2. Qdrant RRF fusion -> top-K candidates
-  3. Parent expansion -> full section text for each top-N result
+  1. Encode query -> dense vector (BGE, with instruction prefix)
+  2. FAISS inner-product search -> top candidates (dense)
+  3. BM25 sparse scoring against stored sparse vectors -> top candidates (sparse)
+  4. Client-side RRF fusion -> top-K merged candidates
+  5. Parent expansion -> full section text for each top-N result
 """
 
 from __future__ import annotations
 
+import logging
+from typing import Callable
+
+import numpy as np
 from fastembed import SparseTextEmbedding
-from qdrant_client import QdrantClient
-from qdrant_client.models import (
-    FieldCondition,
-    Filter,
-    Fusion,
-    FusionQuery,
-    MatchValue,
-    Prefetch,
-    SparseVector,
-)
 
 from phflow.settings import settings
 from phflow.embeddings.encoder import RegulationEncoder
-from phflow.vectorstore.client import scroll_by_node
+from phflow.vectorstore.client import FaissStore
+
+logger = logging.getLogger(__name__)
+
+# RRF constant (same as Qdrant default)
+_RRF_K = 60
 
 
-# Exclude authority chunks (amendment history, statutory citations) which are
-# generic boilerplate and dominate BM25 for unrelated queries.
-_EXCLUDE_AUTHORITY = Filter(
-    must_not=[FieldCondition(key="chunk_type", match=MatchValue(value="authority"))]
-)
+def _rrf_fuse(
+    dense_results: list[dict],
+    sparse_results: list[dict],
+    k: int = _RRF_K,
+    limit: int = 10,
+) -> list[dict]:
+    """
+    Reciprocal Rank Fusion of dense and sparse result lists.
 
+    Each result dict must have an 'id' key. The output carries merged
+    score + the payload from whichever list had the entry (dense preferred).
 
-def _merge_filters(base: Filter | None, extra: Filter) -> Filter:
-    """Combine two Qdrant filters by AND-ing their must conditions."""
-    must = list(extra.must or [])
-    if base and base.must:
-        must.extend(base.must)
-    return Filter(must=must)
+    Returns top-`limit` results sorted by RRF score descending.
+    """
+    scores: dict[str, float] = {}
+    payloads: dict[str, dict] = {}
+
+    for rank, item in enumerate(dense_results):
+        pid = item["id"]
+        scores[pid] = scores.get(pid, 0.0) + 1.0 / (k + rank + 1)
+        if pid not in payloads:
+            payloads[pid] = item["payload"]
+
+    for rank, item in enumerate(sparse_results):
+        pid = item["id"]
+        scores[pid] = scores.get(pid, 0.0) + 1.0 / (k + rank + 1)
+        if pid not in payloads:
+            payloads[pid] = item["payload"]
+
+    # Sort by RRF score descending
+    ranked = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)[:limit]
+
+    return [
+        {"id": pid, "score": score, "payload": payloads[pid]}
+        for pid, score in ranked
+    ]
 
 
 class HybridRetriever:
     def __init__(
         self,
-        qdrant: QdrantClient,
-        collection_name: str,
+        store: FaissStore,
         encoder: RegulationEncoder,
         initial_k: int | None = None,
         top_n: int | None = None,
     ) -> None:
-        self.qdrant = qdrant
-        self.collection_name = collection_name
+        self.store = store
         self.encoder = encoder
         self.initial_k = initial_k or settings.initial_retrieval_k
         self.top_n = top_n or settings.retrieval_top_n
         self._sparse_model = SparseTextEmbedding(model_name="Qdrant/bm25")
 
-    def _encode_sparse(self, text: str) -> SparseVector:
+    def _encode_sparse(self, text: str) -> dict:
+        """Encode text to BM25 sparse vector as {indices, values}."""
         result = list(self._sparse_model.query_embed(text))[0]
-        return SparseVector(
-            indices=result.indices.tolist(),
-            values=result.values.tolist(),
-        )
+        return {
+            "indices": result.indices.tolist(),
+            "values": result.values.tolist(),
+        }
+
+    def _sparse_search(
+        self,
+        query_sparse: dict,
+        filter_fn: Callable[[dict], bool] | None = None,
+        limit: int = 20,
+    ) -> list[dict]:
+        """
+        Score all stored chunks against the query sparse vector using
+        dot-product on overlapping token indices.
+
+        Returns top-`limit` results sorted by score descending.
+        """
+        all_sparse = self.store.get_sparse_data()
+        all_meta = self.store._metadata
+
+        scored: list[tuple[float, int]] = []
+
+        q_indices = set(query_sparse["indices"])
+        q_map = dict(zip(query_sparse["indices"], query_sparse["values"]))
+
+        for i, (sparse, meta) in enumerate(zip(all_sparse, all_meta)):
+            if filter_fn and not filter_fn(meta):
+                continue
+            if not sparse or "indices" not in sparse:
+                continue
+
+            # Dot-product on overlapping indices
+            score = 0.0
+            for idx, val in zip(sparse["indices"], sparse["values"]):
+                if idx in q_map:
+                    score += val * q_map[idx]
+
+            if score > 0:
+                scored.append((score, i))
+
+        # Sort by score descending, take top-limit
+        scored.sort(key=lambda x: x[0], reverse=True)
+        top = scored[:limit]
+
+        return [
+            {
+                "id": all_meta[i].get("_point_id", str(i)),
+                "score": s,
+                "payload": all_meta[i],
+            }
+            for s, i in top
+        ]
+
+    def _build_authority_filter(
+        self,
+        user_filter: Callable[[dict], bool] | None,
+    ) -> Callable[[dict], bool]:
+        """Merge user filter with authority-exclusion filter."""
+        def _combined(payload: dict) -> bool:
+            if payload.get("chunk_type") == "authority":
+                return False
+            if user_filter and not user_filter(payload):
+                return False
+            return True
+        return _combined
 
     def search(
         self,
         query: str,
-        qdrant_filter: Filter | None = None,
+        search_filter: Callable[[dict], bool] | None = None,
         expand_to_parent: bool = True,
         top_n: int | None = None,
         logger=None,
@@ -89,35 +173,31 @@ class HybridRetriever:
         sparse_vec = self._encode_sparse(query)
 
         # Merge caller filter with the authority-exclusion filter
-        search_filter = _merge_filters(qdrant_filter, _EXCLUDE_AUTHORITY)
+        combined_filter = self._build_authority_filter(search_filter)
 
-        # Hybrid search via Qdrant native RRF
+        # Dense search via FAISS
         prefetch_limit = self.initial_k * settings.prefetch_multiplier
-        response = self.qdrant.query_points(
-            collection_name=self.collection_name,
-            prefetch=[
-                Prefetch(
-                    query=dense_vec,
-                    using="",
-                    limit=prefetch_limit,
-                    filter=search_filter,
-                ),
-                Prefetch(
-                    query=sparse_vec,
-                    using="bm25",
-                    limit=prefetch_limit,
-                    filter=search_filter,
-                ),
-            ],
-            query=FusionQuery(fusion=Fusion.RRF),
-            limit=self.initial_k,
-            with_payload=True,
+        dense_results = self.store.search(
+            query_vector=dense_vec,
+            limit=prefetch_limit,
+            filter_fn=combined_filter,
         )
-        candidates = response.points
+
+        # Sparse BM25 search
+        sparse_results = self._sparse_search(
+            query_sparse=sparse_vec,
+            filter_fn=combined_filter,
+            limit=prefetch_limit,
+        )
+
+        # RRF fusion
+        candidates = _rrf_fuse(
+            dense_results, sparse_results, limit=self.initial_k
+        )
 
         if not candidates:
             if logger:
-                logger.log("RETRIEVAL", "No candidates returned from Qdrant.")
+                logger.log("RETRIEVAL", "No candidates returned from FAISS.")
             return []
 
         # Take top-N by RRF score
@@ -126,9 +206,9 @@ class HybridRetriever:
         if logger:
             logger.log("RETRIEVAL (RRF top-N)", [
                 {
-                    "section_number": c.payload.get("section_number", ""),
-                    "section_title": c.payload.get("section_title", ""),
-                    "rrf_score": round(c.score, 6),
+                    "section_number": c["payload"].get("section_number", ""),
+                    "section_title": c["payload"].get("section_title", ""),
+                    "rrf_score": round(c["score"], 6),
                 }
                 for c in top_candidates
             ])
@@ -136,12 +216,12 @@ class HybridRetriever:
         if not expand_to_parent:
             return [
                 {
-                    "section_number": c.payload.get("section_number", ""),
-                    "section_title": c.payload.get("section_title", ""),
-                    "section_node": c.payload.get("section_node", ""),
-                    "full_text": c.payload.get("chunk_text", ""),
-                    "score": c.score,
-                    "metadata": c.payload,
+                    "section_number": c["payload"].get("section_number", ""),
+                    "section_title": c["payload"].get("section_title", ""),
+                    "section_node": c["payload"].get("section_node", ""),
+                    "full_text": c["payload"].get("chunk_text", ""),
+                    "score": c["score"],
+                    "metadata": c["payload"],
                 }
                 for c in top_candidates
             ]
@@ -151,19 +231,19 @@ class HybridRetriever:
         seen_nodes: set[str] = set()
 
         for chunk in top_candidates:
-            node = chunk.payload.get("section_node", "")
+            node = chunk["payload"].get("section_node", "")
             if node in seen_nodes:
                 continue
             seen_nodes.add(node)
 
-            siblings = scroll_by_node(self.qdrant, self.collection_name, node)
+            siblings = self.store.scroll_by_node(node)
 
             # Concatenate sibling chunks into one full section text.
             # Keep the header from the first chunk only; strip it from
             # subsequent chunks so the same header does not repeat.
             texts: list[str] = []
             for i, s in enumerate(siblings):
-                text = s.payload.get("chunk_text", "")
+                text = s["payload"].get("chunk_text", "")
                 if i > 0:
                     lines = text.splitlines()
                     header_dropped = 0
@@ -181,12 +261,12 @@ class HybridRetriever:
             full_text = "\n\n".join(texts)
 
             results.append({
-                "section_number": chunk.payload.get("section_number", ""),
-                "section_title": chunk.payload.get("section_title", ""),
+                "section_number": chunk["payload"].get("section_number", ""),
+                "section_title": chunk["payload"].get("section_title", ""),
                 "section_node": node,
                 "full_text": full_text,
-                "score": chunk.score,
-                "metadata": chunk.payload,
+                "score": chunk["score"],
+                "metadata": chunk["payload"],
             })
 
         return results

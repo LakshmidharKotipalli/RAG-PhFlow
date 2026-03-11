@@ -40,7 +40,8 @@ SYSTEM_PROMPT: str = _load_system_prompt()
 
 
 # Number of conversation turns (user + assistant pairs) to include
-HISTORY_WINDOW = 1
+# Currently set to 0 to prevent prompt contamination and hallucination loops
+HISTORY_WINDOW = 0
 
 # Detect back-references in the current query that require prior conversation context
 _REFERENCE_RE = re.compile(
@@ -83,7 +84,7 @@ def build_prompt(
 
     parts.append(f"INSTRUCTIONS:\n{SYSTEM_PROMPT}")
 
-    if conversation_history:
+    if conversation_history and HISTORY_WINDOW > 0:
         # Expand to 2 turns when the question contains a back-reference pronoun
         # (e.g. "that section", "it", "same requirement") so the model has enough
         # context to resolve the reference. Default stays at HISTORY_WINDOW = 1.
