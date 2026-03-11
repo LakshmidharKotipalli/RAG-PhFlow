@@ -14,6 +14,7 @@ from phflow.settings import settings
 from phflow.generation.citations import format_context_block, source_summary
 from phflow.generation.llm import LlamaCppClient
 from phflow.generation.prompts import (
+    INSUFFICIENT_MESSAGE,
     build_prompt,
     build_retrieval_query,
     build_retrieval_rewrite_prompt,
@@ -23,10 +24,6 @@ from phflow.retrieval.hybrid import HybridRetriever
 from phflow.utils.query_logger import QueryLogger
 
 
-_INSUFFICIENT = (
-    "The provided context does not contain sufficient information "
-    "to answer this question."
-)
 
 # Answers shorter than this are almost certainly hallucinated one-liners
 # (e.g. "2–8°C", "✘ No, you cannot.") that bypassed the context-only rule.
@@ -202,10 +199,10 @@ class RAGChain:
         )
 
         if not sections:
-            qlog.log("FINAL ANSWER", _INSUFFICIENT)
+            qlog.log("FINAL ANSWER", INSUFFICIENT_MESSAGE)
             qlog.log("SOURCES DECLARED BY LLM", [])
             qlog.save_json()
-            return {"answer": _INSUFFICIENT, "sources": [], "pipeline_steps": pipeline_steps}
+            return {"answer": INSUFFICIENT_MESSAGE, "sources": [], "pipeline_steps": pipeline_steps}
 
         # Stage 5: Prompt assembly
         pipeline_steps.append("Assembling prompt")
@@ -279,7 +276,7 @@ class RAGChain:
             or any(sig in answer_lower for sig in _TEMPLATE_SIGNALS)
             or "<think>" in answer_lower
         ):
-            answer = _INSUFFICIENT
+            answer = INSUFFICIENT_MESSAGE
             used_sources = []
 
         qlog.log("FINAL ANSWER", answer)

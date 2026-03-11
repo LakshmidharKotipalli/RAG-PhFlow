@@ -27,7 +27,9 @@ def _load_system_prompt() -> str:
         # Resolve relative paths from the project root (3 levels up from this file)
         path = Path(__file__).parents[3] / path
     try:
-        return path.read_text(encoding="utf-8").strip()
+        content = path.read_text(encoding="utf-8").strip()
+        # Some editors insert a trailing newline or spaces, strip them to be safe
+        return content
     except FileNotFoundError:
         raise FileNotFoundError(
             f"System prompt file not found: {path}\n"
@@ -40,8 +42,15 @@ SYSTEM_PROMPT: str = _load_system_prompt()
 
 
 # Number of conversation turns (user + assistant pairs) to include
-# Currently set to 0 to prevent prompt contamination and hallucination loops
-HISTORY_WINDOW = 0
+# Increased to 1 per user request
+HISTORY_WINDOW = 1
+
+# Text used to indicate that retrieved context was not sufficient for a real answer.
+# CRITICAL: This exact string is used to filter out insufficient turns from chat history.
+INSUFFICIENT_MESSAGE = (
+    "The provided context does not contain sufficient information "
+    "to answer this question."
+)
 
 # Detect back-references in the current query that require prior conversation context
 _REFERENCE_RE = re.compile(
@@ -54,6 +63,31 @@ _REFERENCE_RE = re.compile(
 def _has_reference_signals(question: str) -> bool:
     """Return True if the question contains pronouns or back-reference words."""
     return bool(_REFERENCE_RE.search(question))
+
+
+def _filter_insufficient_history(history: list[dict]) -> list[dict]:
+    """
+    Filter the conversation history to remove turns where the assistant 
+    provided an 'insufficient information' response.
+    """
+    if not history:
+        return []
+        
+    filtered: list[dict] = []
+    # Conversation is expected to be [User, Assistant, User, Assistant, ...]
+    # We iterate by pairs to ensure we remove the question alongside the insufficient answer.
+    for i in range(0, len(history), 2):
+        if i + 1 < len(history):
+            user_msg = history[i]
+            assistant_msg = history[i+1]
+            if INSUFFICIENT_MESSAGE not in assistant_msg.get("content", ""):
+                filtered.append(user_msg)
+                filtered.append(assistant_msg)
+        else:
+            # Trailing message (likely the last user query which hasn't been answered yet)
+            filtered.append(history[i])
+            
+    return filtered
 
 
 def build_prompt(
@@ -85,11 +119,12 @@ def build_prompt(
     parts.append(f"INSTRUCTIONS:\n{SYSTEM_PROMPT}")
 
     if conversation_history and HISTORY_WINDOW > 0:
-        # Expand to 2 turns when the question contains a back-reference pronoun
-        # (e.g. "that section", "it", "same requirement") so the model has enough
-        # context to resolve the reference. Default stays at HISTORY_WINDOW = 1.
-        window = 2 if _has_reference_signals(question) else HISTORY_WINDOW
-        recent = conversation_history[-(window * 2):]
+        # Filter history to remove turns with insufficient content
+        clean_history = _filter_insufficient_history(conversation_history)
+        
+        # Take the last HISTORY_WINDOW turns (each turn is 2 messages)
+        recent = clean_history[-(HISTORY_WINDOW * 2):]
+        
         if recent:
             history_lines = []
             for msg in recent:
@@ -159,7 +194,9 @@ def build_retrieval_rewrite_prompt(
         "- Output ONLY the rewritten query — no explanation, no extra words. Keep it under 20 words."
     )
     if conversation_history:
-        recent = conversation_history[-4:]
+        # Also filter rewrite history to keep only high-quality interaction context
+        clean_history = _filter_insufficient_history(conversation_history)
+        recent = clean_history[-4:]
         history_lines = [
             f"{'User' if m['role'] == 'user' else 'Assistant'}: {m['content']}"
             for m in recent
