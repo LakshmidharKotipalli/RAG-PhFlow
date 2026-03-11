@@ -1,44 +1,34 @@
 from __future__ import annotations
 
-import uuid
-from datetime import datetime, timezone
+import re
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from qdrant_client.http.exceptions import ResponseHandlingException
 
-from phflow.api.dependencies import get_chain
+from phflow.api.dependencies import get_chain, get_session_store
 from phflow.api.routers.search import _confidence_label
 from phflow.api.schemas import ChatRequest, ChatResponse, SourceResult
+from phflow.api.session_store import SessionStore
 from phflow.generation.chain import RAGChain
 
+_UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
 
 router = APIRouter(prefix="/api/v1", tags=["chat"])
-
-# In-memory session store (dev mode)
-# For production: replace with Redis
-_sessions: dict[str, dict] = {}
-
-
-def _get_or_create_session(session_id: str | None) -> tuple[str, dict]:
-    if session_id and session_id in _sessions:
-        return session_id, _sessions[session_id]
-    sid = str(uuid.uuid4())
-    _sessions[sid] = {
-        "session_id": sid,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "messages": [],
-    }
-    return sid, _sessions[sid]
 
 
 async def _handle_chat(
     req: ChatRequest,
     session_id: str | None,
     chain: RAGChain,
+    store: SessionStore,
 ) -> ChatResponse:
-    sid, session = _get_or_create_session(session_id)
+    if session_id and store.exists(session_id):
+        sid, session = session_id, store.get(session_id)
+    else:
+        sid, session = store.create()
+
     history = session["messages"]
 
     try:
@@ -67,9 +57,10 @@ async def _handle_chat(
             detail="A backend service is unavailable. Ensure Qdrant (docker compose up -d) and llama-server are running.",
         )
 
-    # Update session history
+    # Update session history and persist
     session["messages"].append({"role": "user", "content": req.message})
     session["messages"].append({"role": "assistant", "content": result["answer"]})
+    store.save(sid, session)
 
     sources = [
         SourceResult(
@@ -91,6 +82,7 @@ async def _handle_chat(
         answer=result["answer"],
         sources=sources,
         mode=req.mode,
+        pipeline_steps=result.get("pipeline_steps", []),
     )
 
 
@@ -98,25 +90,37 @@ async def _handle_chat(
 async def new_chat(
     req: ChatRequest,
     chain: RAGChain = Depends(get_chain),
+    store: SessionStore = Depends(get_session_store),
 ):
     if req.stream:
-        # Streaming: return SSE-style response
+        sid, session = store.create()
         result = await chain.run(
             query=req.message,
             mode=req.mode,
+            conversation_history=session["messages"],
             stream=True,
             part_number=req.filters.part_number,
             chapter_number=req.filters.chapter_number,
             amended_after=req.filters.amended_after,
         )
+        session["messages"].append({"role": "user", "content": req.message})
 
         async def token_generator():
+            accumulated: list[str] = []
             async for token in result:
+                accumulated.append(token)
                 yield token
+            # Persist assistant response after stream completes
+            session["messages"].append({"role": "assistant", "content": "".join(accumulated)})
+            store.save(sid, session)
 
-        return StreamingResponse(token_generator(), media_type="text/plain")
+        return StreamingResponse(
+            token_generator(),
+            media_type="text/plain",
+            headers={"X-Session-Id": sid},
+        )
 
-    return await _handle_chat(req, session_id=None, chain=chain)
+    return await _handle_chat(req, session_id=None, chain=chain, store=store)
 
 
 @router.post("/chat/{session_id}/message", response_model=ChatResponse)
@@ -124,25 +128,38 @@ async def continue_chat(
     session_id: str,
     req: ChatRequest,
     chain: RAGChain = Depends(get_chain),
+    store: SessionStore = Depends(get_session_store),
 ):
-    if session_id not in _sessions:
+    if not _UUID_RE.match(session_id):
+        raise HTTPException(status_code=400, detail="Invalid session ID format")
+    if not store.exists(session_id):
         raise HTTPException(status_code=404, detail=f"Session '{session_id}' not found")
 
     if req.stream:
+        session = store.get(session_id)
         result = await chain.run(
             query=req.message,
             mode=req.mode,
-            conversation_history=_sessions[session_id]["messages"],
+            conversation_history=session["messages"],
             stream=True,
             part_number=req.filters.part_number,
             chapter_number=req.filters.chapter_number,
             amended_after=req.filters.amended_after,
         )
+        session["messages"].append({"role": "user", "content": req.message})
 
         async def token_generator():
+            accumulated: list[str] = []
             async for token in result:
+                accumulated.append(token)
                 yield token
+            session["messages"].append({"role": "assistant", "content": "".join(accumulated)})
+            store.save(session_id, session)
 
-        return StreamingResponse(token_generator(), media_type="text/plain")
+        return StreamingResponse(
+            token_generator(),
+            media_type="text/plain",
+            headers={"X-Session-Id": session_id},
+        )
 
-    return await _handle_chat(req, session_id=session_id, chain=chain)
+    return await _handle_chat(req, session_id=session_id, chain=chain, store=store)

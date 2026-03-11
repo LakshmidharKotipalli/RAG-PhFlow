@@ -3,47 +3,56 @@ Prompt construction for pharmaceutical/medical purchase order Q&A.
 
 Uses a plain-text labeled-section format that works with any
 instruction-tuned model regardless of its specific chat template.
+
+The system prompt is loaded from the file configured in settings.system_prompt_path
+(default: prompts/system_prompt.txt at the project root).  Edit that file to change
+the model's instructions without touching code.
 """
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
 
-SYSTEM_PROMPT = """\
-You are a regulatory expert on FDA Title 21 CFR (Food and Drugs). \
-Answer questions using ONLY the regulatory sections provided in the CONTEXT block. \
-Do not use outside knowledge under any circumstances.
+from phflow.settings import settings
 
-ANSWERING RULES:
 
-1. CONTEXT IS YOUR ONLY SOURCE — every claim in your answer must come directly \
-from the CONTEXT. If a fact is not stated there, do not include it.
+def _load_system_prompt() -> str:
+    """
+    Load the system prompt from the configured file path.
+    Falls back to a minimal inline prompt if the file is missing.
+    """
+    path = Path(settings.system_prompt_path)
+    if not path.is_absolute():
+        # Resolve relative paths from the project root (3 levels up from this file)
+        path = Path(__file__).parents[3] / path
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        raise FileNotFoundError(
+            f"System prompt file not found: {path}\n"
+            "Create it at prompts/system_prompt.txt or set SYSTEM_PROMPT_PATH in .env."
+        )
 
-2. INSUFFICIENT CONTEXT — if the CONTEXT does not contain information relevant \
-to the question, respond with exactly this sentence and nothing else:
-"The provided context does not contain sufficient information to answer this question."
-Do not guess, infer, or draw on training knowledge.
 
-3. PARTIAL CONTEXT — if the CONTEXT partially addresses the question, answer \
-from what is available and explicitly state what the context does not cover.
-
-4. LENGTHY CONTEXT — if the CONTEXT is long or covers many topics, distil it: \
-identify the information directly relevant to the question and summarise that \
-information concisely. Do not reproduce large blocks of regulatory text verbatim.
-
-5. ANSWER FORMAT — write in formal prose paragraphs. Cover all requirements, \
-conditions, and exceptions relevant to the question. Do not bullet-point, \
-do not restate the question. Do not include CFR section numbers, section titles, \
-or source labels (e.g. "[SOURCE 1]") anywhere in your answer text.
-
-6. CITATIONS — THIS IS MANDATORY. Every response must end with a line listing \
-the source numbers you drew from. Use this exact format and nothing else:
-SOURCES_USED: 1, 3
-Separate numbers with commas. If no source was used, write: SOURCES_USED: none
-This line MUST be the last line of every response. Omitting it is not permitted."""
+# Loaded once at import time.  Restart the API server after editing the file.
+SYSTEM_PROMPT: str = _load_system_prompt()
 
 
 # Number of conversation turns (user + assistant pairs) to include
 HISTORY_WINDOW = 1
+
+# Detect back-references in the current query that require prior conversation context
+_REFERENCE_RE = re.compile(
+    r"\b(that|it|its|same|above|those|this|the\s+section|the\s+requirement|"
+    r"the\s+rule|the\s+regulation|mentioned|referred|previous|prior)\b",
+    re.IGNORECASE,
+)
+
+
+def _has_reference_signals(question: str) -> bool:
+    """Return True if the question contains pronouns or back-reference words."""
+    return bool(_REFERENCE_RE.search(question))
 
 
 def build_prompt(
@@ -75,7 +84,11 @@ def build_prompt(
     parts.append(f"INSTRUCTIONS:\n{SYSTEM_PROMPT}")
 
     if conversation_history:
-        recent = conversation_history[-(HISTORY_WINDOW * 2):]
+        # Expand to 2 turns when the question contains a back-reference pronoun
+        # (e.g. "that section", "it", "same requirement") so the model has enough
+        # context to resolve the reference. Default stays at HISTORY_WINDOW = 1.
+        window = 2 if _has_reference_signals(question) else HISTORY_WINDOW
+        recent = conversation_history[-(window * 2):]
         if recent:
             history_lines = []
             for msg in recent:
@@ -99,3 +112,58 @@ def build_retrieval_query(messages: list[dict], current_query: str) -> str:
     quality by mixing unrelated questions.
     """
     return current_query
+
+
+def build_retrieval_rewrite_prompt(
+    current_query: str,
+    conversation_history: list[dict] | None = None,
+) -> str:
+    """
+    Build a short prompt asking the LLM to rewrite a colloquial warehouse/operations
+    query into formal CFR regulatory terminology suitable for vector retrieval.
+
+    Used when ENABLE_QUERY_REWRITE=true. The result replaces the raw query
+    for retrieval only; the original question is still shown to the user.
+    """
+    parts: list[str] = []
+    parts.append(
+        "INSTRUCTIONS:\n"
+        "You are a query rewriting assistant for an FDA Title 21 CFR regulatory "
+        "search system used by pharmaceutical warehouse and manufacturing staff.\n\n"
+        "Rewrite the user's operational question into a concise search query using "
+        "formal CFR regulatory terminology so it matches the language of the regulations.\n\n"
+        "Vocabulary mapping to apply:\n"
+        "- pallet / carton / box / shipment → container / outer container / shipment\n"
+        "- leakage / leak / spill → contaminated / damaged container / deteriorated\n"
+        "- accept / reject a delivery → receipt / receiving / acceptance criteria\n"
+        "- temperature logger / data logger → temperature monitoring / temperature recording equipment\n"
+        "- power failure / power outage → equipment failure / loss of temperature control\n"
+        "- lot mix-up / mix together → commingling / mixup / segregation\n"
+        "- bin / shelf / rack → storage area / storage conditions\n"
+        "- handwritten label → labeling / label legibility\n"
+        "- quarantine area / hold area → quarantine / withheld from use\n"
+        "- quality team / QA / quality unit → quality control unit\n"
+        "- approved supplier → qualified / approved supplier / vendor qualification\n"
+        "- temperature-sensitive → temperature-controlled / cold chain / storage requirements\n"
+        "- damaged seal → compromised container / opened container / container integrity\n"
+        "- relabel / re-label → repackaging / labeling / relabeling\n"
+        "- inventory count → physical inventory / inventory reconciliation\n"
+        "- ship to customers → distribution / release for distribution\n\n"
+        "IMPORTANT CONSTRAINTS:\n"
+        "- Only substitute operational terms with CFR equivalents from the vocabulary above.\n"
+        "- Do NOT add new concepts, conditions, or terms not present in the original question.\n"
+        "- Do NOT rephrase the entire question — only replace non-CFR words with CFR equivalents.\n"
+        "- Keep the rewritten query as close to the original structure as possible.\n"
+        "- If the original question already uses formal terms, return it unchanged.\n"
+        "- Output ONLY the rewritten query — no explanation, no extra words. Keep it under 20 words."
+    )
+    if conversation_history:
+        recent = conversation_history[-4:]
+        history_lines = [
+            f"{'User' if m['role'] == 'user' else 'Assistant'}: {m['content']}"
+            for m in recent
+        ]
+        parts.append("CONVERSATION HISTORY:\n" + "\n\n".join(history_lines))
+    parts.append(f"CURRENT QUESTION:\n{current_query}")
+    parts.append("Rewritten query:")
+    return "\n\n".join(parts)

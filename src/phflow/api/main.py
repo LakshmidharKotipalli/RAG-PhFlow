@@ -1,7 +1,7 @@
 """
 FastAPI application factory with lifespan-managed component initialization.
 
-All heavy components (encoder, reranker, Qdrant client, llama.cpp client) are
+All heavy components (encoder, Qdrant client, llama.cpp client) are
 initialized once at startup and shared via app.state.
 """
 
@@ -21,12 +21,13 @@ from fastapi.staticfiles import StaticFiles
 _UI_DIR = Path(__file__).parents[3] / "ui"
 
 from phflow.api.routers import chat, health, search
-from phflow.config.settings import settings
+from phflow.api.session_store import make_session_store
+from phflow.settings import settings
 from phflow.embeddings.encoder import RegulationEncoder
 from phflow.generation.chain import RAGChain
 from phflow.generation.llm import LlamaCppClient
 from phflow.retrieval.hybrid import HybridRetriever
-from phflow.retrieval.reranker import Reranker
+
 from phflow.vectorstore.client import get_qdrant_client
 
 logger = logging.getLogger(__name__)
@@ -44,12 +45,7 @@ async def lifespan(app: FastAPI):
     )
     logger.info("Encoder loaded: %s (dim=%d)", settings.embedding_model, encoder.embedding_dim)
 
-    # Reranker
-    reranker = Reranker(
-        model_name=settings.reranker_model,
-        device=settings.embedding_device,
-    )
-    logger.info("Reranker loaded: %s", settings.reranker_model)
+
 
     # Qdrant
     qdrant = get_qdrant_client()
@@ -57,29 +53,37 @@ async def lifespan(app: FastAPI):
 
     # llama.cpp server
     llm = LlamaCppClient()
-    logger.info("llama.cpp client ready @ %s", settings.llama_cpp_url)
+    if await llm.health():
+        logger.info("llama.cpp client ready @ %s", settings.llama_cpp_url)
+    else:
+        logger.warning(
+            "llama.cpp server not reachable at %s — start it before sending queries",
+            settings.llama_cpp_url,
+        )
 
     # Retriever
     retriever = HybridRetriever(
         qdrant=qdrant,
         collection_name=settings.collection_name,
         encoder=encoder,
-        reranker=reranker,
-        initial_k=settings.initial_retrieval_k,
-        reranker_top_n=settings.reranker_top_n,
-        reranker_score_threshold=settings.reranker_score_threshold,
     )
 
     # RAG chain
     chain = RAGChain(retriever=retriever, llm=llm)
 
+    # Session store (Redis if REDIS_URL is set, else in-memory)
+    session_store = make_session_store(settings.redis_url)
+    backend = "Redis" if hasattr(session_store, "_redis") else "in-memory"
+    logger.info("Session store: %s", backend)
+
     # Store in app state for dependency injection
     app.state.encoder = encoder
-    app.state.reranker = reranker
+
     app.state.qdrant = qdrant
     app.state.llm = llm
     app.state.retriever = retriever
     app.state.chain = chain
+    app.state.session_store = session_store
 
     logger.info("All components initialized. API ready.")
     yield
@@ -102,10 +106,10 @@ def create_app() -> FastAPI:
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=settings.cors_origins,
         allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["Content-Type", "Authorization", "X-Session-Id"],
     )
 
     app.include_router(health.router)

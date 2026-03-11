@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from phflow.api.dependencies import get_retriever
 from phflow.api.schemas import PartInfo, SearchRequest, SearchResponse, SourceResult
+from phflow.settings import settings
 from phflow.retrieval.filters import build_filter
 from phflow.retrieval.hybrid import HybridRetriever
 from phflow.vectorstore.client import scroll_by_node
@@ -28,8 +29,14 @@ async def search(
 ) -> SearchResponse:
     start = time.perf_counter()
 
+    # Apply the same scope logic as the chat endpoint:
+    # explicit part_number from request wins; otherwise fall back to configured scope.
+    explicit_part = req.filters.part_number
+    scope = settings.scope_part_numbers if not explicit_part else None
+
     qdrant_filter = build_filter(
-        part_number=req.filters.part_number,
+        part_number=explicit_part,
+        part_numbers=scope or None,
         chapter_number=req.filters.chapter_number,
         subpart_letter=req.filters.subpart_letter,
         chunk_types=req.filters.chunk_types,

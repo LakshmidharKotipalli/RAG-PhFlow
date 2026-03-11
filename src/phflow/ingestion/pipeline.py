@@ -21,7 +21,7 @@ from fastembed import SparseTextEmbedding
 from qdrant_client.models import SparseVector
 from tqdm import tqdm
 
-from phflow.config.settings import settings
+from phflow.settings import settings
 from phflow.embeddings.encoder import RegulationEncoder
 from phflow.ingestion.chunker import Chunk, build_parent_text, chunk_section, count_tokens
 from phflow.ingestion.metadata import enrich_with_version, load_versions

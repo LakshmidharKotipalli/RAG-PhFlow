@@ -29,10 +29,13 @@ Ask natural-language questions and get synthesised, well-explained answers groun
 ┌──────────────────────────────────────────────────────────────────┐
 │                    Hybrid Retrieval                              │
 │                                                                  │
-│  Query ──► BGE embed (w/ prefix) ──► Dense vector ────┐         │
+│  Query ──► auto-extract filters (Part/Chapter/date hints)        │
+│        ──► [optional] LLM query rewrite → formal CFR terms       │
+│        ──► BGE embed (w/ prefix) ──► Dense vector ────┐         │
 │        ──► BM25 (fastembed)      ──► Sparse vector ───┤  RRF    │
 │                       (text + table chunks)            └►Qdrant  │
 │                                     BGE-Reranker-base ──►top-5  │
+│                                     (fallback-top1 guard)        │
 │                                     Parent expansion ──► LLM    │
 └──────────────────────────────────────────────────────────────────┘
     │
@@ -50,12 +53,13 @@ Ask natural-language questions and get synthesised, well-explained answers groun
 | Component | Technology |
 |---|---|
 | UI | Vanilla HTML/CSS/JS (served by FastAPI) |
-| Embedding | `BAAI/bge-base-en-v1.5` (768-dim, asymmetric query prefix) |
+| Embedding | `BAAI/bge-base-en-v1.5` (768-dim, asymmetric query prefix, LRU-cached) |
 | Sparse search | `fastembed` — `Qdrant/bm25` |
 | Vector DB | Qdrant (hybrid dense + sparse, HNSW, on-disk BM25) |
-| Reranker | `BAAI/bge-reranker-base` (cross-encoder, sigmoid scoring) |
+| Reranker | `BAAI/bge-reranker-base` (cross-encoder, sigmoid scoring, fallback-top1) |
 | LLM | llama.cpp server (any GGUF model) |
 | API | FastAPI + uvicorn |
+| Session store | In-memory dict (default) or Redis (opt-in via `REDIS_URL`) |
 
 ---
 
@@ -75,7 +79,6 @@ Source: `data/ecfr-title-21/ECFR-title21.xml`
 
 ```
 RAG-PhFlow/
-├── Makefile                      # dev/run/ingest shortcuts
 ├── pyproject.toml
 ├── .env                          # local config (copy from .env.example)
 ├── docker-compose.yml            # Qdrant service
@@ -89,23 +92,24 @@ RAG-PhFlow/
 │   │   ├── chunker.py            # structural chunker (one chunk per top-level CFR paragraph)
 │   │   ├── metadata.py           # versions.json enrichment
 │   │   └── pipeline.py           # ingestion orchestrator
-│   ├── embeddings/encoder.py     # BGE sentence-transformer wrapper (asymmetric encode_query)
+│   ├── embeddings/encoder.py     # BGE sentence-transformer wrapper + LRU query cache
 │   ├── vectorstore/
 │   │   ├── client.py             # Qdrant client + upsert helpers
 │   │   └── schema.py             # collection + payload index setup
 │   ├── retrieval/
 │   │   ├── hybrid.py             # dense + sparse RRF → rerank → parent expand
-│   │   ├── reranker.py           # BGE-Reranker-base (cross-encoder, sigmoid scoring)
-│   │   └── filters.py            # Qdrant Filter builder
+│   │   ├── reranker.py           # BGE-Reranker-base (cross-encoder, fallback-top1)
+│   │   └── filters.py            # Qdrant Filter builder + auto filter extraction
 │   ├── generation/
 │   │   ├── llm.py                # llama.cpp HTTP client
-│   │   ├── prompts.py            # QA system prompt + query builder
+│   │   ├── prompts.py            # QA system prompt, query rewrite, adaptive history window
 │   │   ├── citations.py          # context block + source summary formatting
 │   │   └── chain.py              # full RAG pipeline orchestrator
 │   └── api/
-│       ├── main.py               # FastAPI app factory + static file serving
+│       ├── main.py               # FastAPI app factory + startup health gate
 │       ├── schemas.py            # Pydantic request/response models
 │       ├── dependencies.py       # FastAPI Depends injectors
+│       ├── session_store.py      # SessionStore abstraction (in-memory + Redis)
 │       └── routers/              # health.py, search.py, chat.py
 │
 ├── scripts/
@@ -113,13 +117,14 @@ RAG-PhFlow/
 │   └── verify_collection.py     # spot-check Qdrant after ingest
 ├── tests/
 │   ├── unit/                     # test_chunker.py, test_cleaner.py
-│   └── integration/
+│   ├── integration/
+│   └── eval/                     # golden_set.json + retrieval quality tests (P@5, R@5)
 ├── ui/
 │   ├── index.html                # single-page Q&A app
 │   └── static/
 │       ├── style.css
 │       └── app.js
-└── query_logs/                   # per-query pipeline debug logs (gitignored)
+└── query_logs/                   # per-query pipeline debug logs — JSON only (gitignored)
 ```
 
 ---
@@ -137,13 +142,15 @@ RAG-PhFlow/
 
 ```bash
 pip install -e ".[ingestion,api]"
+
+# Optional: Redis-backed session persistence
+pip install -e ".[redis]"
 ```
 
 ### 2. Start Qdrant
 
 ```bash
-make qdrant
-# or: docker compose up -d
+docker compose up -d
 ```
 
 Qdrant dashboard: http://localhost:6333/dashboard
@@ -166,6 +173,8 @@ Recommended models (from [bartowski on HuggingFace](https://huggingface.co/barto
 
 > **Context window:** The server must be started with `-c 65536` to match `LLAMA_CPP_NUM_CTX=65536` in `.env`. Using a smaller value silently caps the context.
 
+> **Startup health check:** The API warns in the log if llama.cpp is unreachable at startup — it does not hard-fail so you can start the server after the API if needed.
+
 ### 4. Configure environment
 
 ```bash
@@ -176,11 +185,10 @@ cp .env.example .env
 ### 5. Run ingestion
 
 ```bash
-make ingest
-# or: python scripts/ingest.py --reset
+python scripts/ingest.py --reset
 
 # Verify:
-make verify
+python scripts/verify_collection.py
 ```
 
 Estimated time: ~25 minutes on CPU, ~4 minutes with GPU.
@@ -188,8 +196,11 @@ Estimated time: ~25 minutes on CPU, ~4 minutes with GPU.
 ### 6. Start the API + UI
 
 ```bash
-make run          # production (no reload)
-make dev          # development (auto-reload on src/ and ui/ changes only)
+# Production (no reload)
+uvicorn phflow.api.main:app --port 8000
+
+# Development (auto-reload on src/ and ui/ changes only)
+uvicorn phflow.api.main:app --reload --reload-dir src --reload-dir ui --port 8000
 ```
 
 Open **http://localhost:8000** — the Q&A interface loads in your browser.
@@ -319,6 +330,10 @@ Without this prefix, query vectors and chunk vectors occupy different regions of
 
 Both query and passage vectors are L2-normalised before storage, so cosine similarity reduces to dot product, enabling fast HNSW search.
 
+**Query vector cache**
+
+`encode_query()` maintains a module-level LRU cache (256 entries). Repeated or near-identical queries — common during a session — skip model inference entirely. The model is deterministic, so cached results are always correct.
+
 ---
 
 ### 5. Indexing
@@ -370,7 +385,33 @@ Every chunk stores a rich metadata payload. The following fields are indexed for
 
 **File:** `src/phflow/retrieval/hybrid.py`
 
-#### 6.1 Hybrid Search (Dense + BM25 via RRF)
+#### 6.1 Auto Filter Extraction
+
+**File:** `src/phflow/retrieval/filters.py` → `extract_filters_from_query()`
+
+Before retrieval, the raw query is scanned for explicit filter hints and any detected values are merged with caller-supplied filters (caller values always take precedence):
+
+| Pattern in query | Auto-set filter | Example |
+|---|---|---|
+| `"Part 211"` / `"part 211"` | `part_number=211` | "What are Part 211 GMP requirements?" |
+| `"§ 211.42"` | `part_number=211` | "What does § 211.42 require?" |
+| `"Chapter I"` | `chapter_number="I"` | "Chapter I labeling rules" |
+| `"amended after 2022"` | `amended_after="2022-01-01"` | "rules amended after 2022" |
+
+This improves precision for queries that name a specific Part without the user setting a filter in the API request.
+
+#### 6.2 Optional Query Rewrite
+
+**File:** `src/phflow/generation/prompts.py` → `build_retrieval_rewrite_prompt()`
+
+When `ENABLE_QUERY_REWRITE=true`, a short LLM call (`max_tokens=80`) rewrites colloquial workplace language into formal CFR terminology before the retrieval encode step. For example:
+
+- `"fridge temperature for drugs"` → `"storage temperature requirements for pharmaceutical drug products"`
+- `"sign off on a digital form"` → `"electronic record signature requirements"`
+
+The rewrite only affects the retrieval query. The original question is still shown to the user and used for prompt assembly. This feature is **off by default** (`ENABLE_QUERY_REWRITE=false`) to preserve latency.
+
+#### 6.3 Hybrid Search (Dense + BM25 via RRF)
 
 Both retrieval signals are computed in parallel and fused natively inside Qdrant using Reciprocal Rank Fusion (RRF):
 
@@ -406,9 +447,9 @@ A permanent filter is AND-ed into every search that excludes `chunk_type="author
 
 **Prefetch limits**
 
-Each prefetch (dense and sparse) fetches `initial_k × 2 = 80` candidates. After RRF merge, the top `initial_k = 40` are passed to the reranker. The 2× prefetch factor ensures that both retrieval signals contribute meaningfully to the final candidate set — a chunk that scores 41st in dense but 3rd in BM25 would be lost if prefetch matched `initial_k` exactly.
+Each prefetch (dense and sparse) fetches `initial_k × PREFETCH_MULTIPLIER` candidates (default `2`, so 80 each). After RRF merge, the top `initial_k = 40` are passed to the reranker. The multiplier is configurable via `PREFETCH_MULTIPLIER` in `.env` to tune the recall/latency tradeoff.
 
-#### 6.2 Metadata Filtering
+#### 6.4 Metadata Filtering
 
 Any combination of the following filters can be applied pre-search (pushed into the Qdrant `filter` parameter, not post-filtered):
 
@@ -449,14 +490,11 @@ scores = torch.sigmoid(logits[:, 0])     # → [0, 1] relevance probability
 
 `sigmoid(logit)` converts the raw classification output to a calibrated probability in [0, 1]. A score of 0.5 means the model is uncertain; scores above ~0.6 indicate genuine relevance.
 
-**Threshold filtering**
+**Threshold filtering with fallback**
 
-Only candidates with `score >= reranker_score_threshold` (default `0.25`) survive. This threshold is intentionally low because:
+Candidates with `score >= reranker_score_threshold` (default `0.25`) are returned, up to `reranker_top_n`. The threshold is intentionally low because the reranker is a general-purpose model and calibrated scores for regulatory content cluster in the 0.3–0.6 range.
 
-1. The reranker is a general-purpose model, not fine-tuned on regulatory text, so calibrated scores for regulatory content cluster in the 0.3–0.6 range even for genuinely relevant passages
-2. A false negative (relevant section dropped) produces an empty context → `_INSUFFICIENT` answer, which is worse than passing a slightly weaker section to the LLM
-
-Top `reranker_top_n` (default 5) survivors are returned, sorted by score descending.
+If **no** candidate clears the threshold — which can happen when query vocabulary has no overlap with retrieved chunks — the single highest-scoring candidate is returned as a fallback (`fallback_top1=True`). This prevents the reranker from silently emptying the result set and triggering an unnecessary `_INSUFFICIENT` response.
 
 **Batch inference**
 
@@ -484,19 +522,22 @@ This ensures the LLM always receives complete regulatory sections, not fragments
 
 **File:** `src/phflow/generation/prompts.py`, `src/phflow/generation/chain.py`
 
-**Current state: pass-through**
+**Retrieval query**
 
-The user's raw query is passed directly to both the retrieval encoder and the reranker. No rewriting or expansion is performed before retrieval.
+The user's raw query is passed directly to the retrieval encoder (after optional rewrite — see §6.2). No expansion is performed before retrieval by default.
 
-This preserves latency (one LLM call instead of two) but means that conversational workplace language (`"fridge"`, `"sign off on a digital form"`, `"trusted supplier"`) has a vocabulary gap from formal CFR regulatory text. The vocabulary gap is the primary cause of retrieval misses for colloquial queries.
+**Adaptive history window**
 
-**History window**
+The prompt includes conversation history to resolve follow-up references. The window size adapts to the query:
 
-Only the most recent conversation turn (user + assistant pair) is prepended to the generation prompt for follow-up context. Full history is not prepended to the retrieval query — early testing showed that concatenating prior turns into the retrieval query degraded precision by pulling the query vector toward the previous topic rather than the current question.
+- **Default (`HISTORY_WINDOW = 1`):** last 1 user+assistant turn (2 messages)
+- **Expanded (2 turns / 4 messages):** automatically activated when the query contains a back-reference pronoun or phrase — `"that"`, `"it"`, `"its"`, `"same"`, `"the section"`, `"the requirement"`, `"previous"`, etc.
 
-**Future: LLM-based retrieval rewrite**
+This gives the model exactly the disambiguation context it needs for follow-up questions without bloating the prompt for fresh queries.
 
-The codebase includes `build_retrieval_rewrite_prompt()` in `prompts.py` — a prompt designed to convert colloquial queries to formal CFR terminology before retrieval, using a short LLM call with `max_tokens=80`. This was implemented but deferred due to the latency cost of an additional inference round-trip before retrieval.
+**Retrieval query isolation**
+
+Prior conversation turns are never concatenated into the retrieval query. Early testing showed that mixing prior turns into the retrieval query degraded precision by pulling the query vector toward the previous topic.
 
 ---
 
@@ -510,7 +551,7 @@ The assembled prompt has four sections in order:
 INSTRUCTIONS:
 {system_prompt}
 
-CONVERSATION HISTORY:          ← optional, last 1 turn only
+CONVERSATION HISTORY:          ← adaptive: 1 turn normally, 2 turns on back-references
 User: {prior question}
 Assistant: {prior answer}
 
@@ -551,10 +592,6 @@ Each source in the CONTEXT block is labelled `[SOURCE N]` and includes:
 - Full section text (from parent expansion)
 
 Labels are 1-based. The `SOURCES_USED:` declaration at the end of the answer maps these indices back to the actual sections, allowing the API to return only the sources the model actually used.
-
-**Conversation history window**
-
-`HISTORY_WINDOW = 1` — only the last user+assistant pair is included. This gives the model enough context to resolve pronouns and follow-up references (`"What about that section?"`) without polluting the prompt with older conversation turns that could bias retrieval or confuse the model.
 
 ---
 
@@ -604,6 +641,7 @@ After generation, `_clean()` applies three passes in order:
 `_parse_used_sources()` in `chain.py` processes the cleaned answer:
 
 - Scans **top-down** for the **first** `SOURCES_USED:` line. Taking the first occurrence is correct because the model should emit this line once at the end of its answer — any subsequent occurrences are part of a repetition loop and are discarded along with everything after them.
+- Matching is **case-insensitive** and accepts both `SOURCES_USED:` and `SOURCES USED:` (space variant emitted by some models)
 - Parses the 1-based source indices (e.g. `"1, 3"`) and maps them to the actual `source_summary` entries
 - Strips the `SOURCES_USED:` line and everything after it from the answer
 - Strips any residual `[SOURCE N]` markers from the answer body
@@ -629,29 +667,49 @@ The **no-sections short-circuit** is critical: when the reranker filters out all
 
 ---
 
-### 13. Per-Query Debug Logging
+### 13. Session Management
+
+**File:** `src/phflow/api/session_store.py`
+
+Sessions persist the conversation history (`user` + `assistant` message pairs) across turns. Two backends are available:
+
+| Backend | Activation | Behaviour |
+|---|---|---|
+| `InMemorySessionStore` | Default (no config needed) | Module-level dict; sessions lost on restart |
+| `RedisSessionStore` | Set `REDIS_URL=redis://localhost:6379` | JSON-serialized in Redis with 24-hour TTL; sessions survive restarts |
+
+The API selects the backend automatically at startup. If `REDIS_URL` is set but Redis is unreachable, it falls back to in-memory silently.
+
+**Streaming and session history**
+
+Both streaming and non-streaming responses now save the full conversation turn to the session store after completion. Streaming responses include an `X-Session-Id` response header so clients can continue the session.
+
+---
+
+### 14. Per-Query Debug Logging
 
 **File:** `src/phflow/utils/query_logger.py`
 
-Every query writes a timestamped log to `query_logs/` capturing the full pipeline state:
+Every query writes one timestamped JSON file to `query_logs/`:
 
 ```
 query_logs/
-└── 20260309_141457_691117__My_coworker_said_we_don_t_need_to_do_a_f.log
+└── 20260309_141457_691117__What_are_the_GMP_requirements_for.json
 ```
 
-Each log contains (in order):
+Each file captures (in order):
 1. Original query
-2. Retrieval query (after any transformation)
-3. Pre-rerank candidates: section number, title, RRF score (top 40)
-4. Post-rerank results: section number, title, reranker probability (top 5)
-5. Sections passed to LLM: section number, title, reranker score, full_text char count
-6. Full assembled prompt
-7. Raw LLM output (before any cleaning or guard evaluation)
-8. Final answer (after all cleaning and guards)
-9. Sources declared by LLM
+2. Retrieval query (after rewrite, if enabled)
+3. Auto-extracted filters (if any were detected)
+4. Pre-rerank candidates: section number, title, RRF score (top 40)
+5. Post-rerank results: section number, title, reranker probability (top 5)
+6. Sections passed to LLM: section number, title, reranker score, full_text char count
+7. Assembled prompt — stored as an **array of lines** for readability
+8. Raw LLM output — stored as an **array of lines** for readability
+9. Final answer — stored as an **array of lines** for readability
+10. Sources declared by LLM
 
-These logs are the primary debugging tool. Reading a log file immediately reveals whether a failure is a retrieval miss (wrong sections in pre-rerank), a reranker failure (correct sections dropped below threshold), a prompt issue (assembled prompt malformed), or an LLM output issue (degenerate answer).
+Structured JSON enables aggregate analysis (e.g. "what % of queries had 0 sections after reranking?") and is readable in any JSON viewer or text editor.
 
 ---
 
@@ -703,6 +761,8 @@ Response:
 }
 ```
 
+**Streaming:** Set `"stream": true`. Response is `text/plain` token stream with `X-Session-Id` header for session continuation.
+
 **Continue a session:**
 ```
 POST /api/v1/chat/{session_id}/message
@@ -738,7 +798,7 @@ All settings are in `.env` (see `.env.example`):
 | Variable | Default | Description |
 |---|---|---|
 | `EMBEDDING_MODEL` | `BAAI/bge-base-en-v1.5` | Sentence-transformer model |
-| `EMBEDDING_DEVICE` | `cuda` | `cpu`, `cuda`, or `mps` |
+| `EMBEDDING_DEVICE` | `cpu` | `cpu`, `cuda`, or `mps` |
 | `QDRANT_URL` | `http://localhost:6333` | Qdrant server URL |
 | `COLLECTION_NAME` | `ecfr_title21` | Qdrant collection |
 | `LLAMA_CPP_URL` | `http://localhost:8080` | llama.cpp server URL |
@@ -749,6 +809,9 @@ All settings are in `.env` (see `.env.example`):
 | `INITIAL_RETRIEVAL_K` | `40` | Candidates before reranking |
 | `RERANKER_TOP_N` | `5` | Sections passed to LLM |
 | `RERANKER_SCORE_THRESHOLD` | `0.25` | Min reranker yes-probability (filters weak matches) |
+| `PREFETCH_MULTIPLIER` | `2` | Qdrant prefetch = `initial_k × multiplier` per branch |
+| `ENABLE_QUERY_REWRITE` | `false` | Rewrite colloquial queries to CFR terminology before retrieval |
+| `REDIS_URL` | _(unset)_ | Redis URL for persistent sessions (e.g. `redis://localhost:6379`) |
 | `CHUNK_MAX_TOKENS` | `512` | Overflow guard for structural chunking |
 
 ---
@@ -759,8 +822,14 @@ All settings are in `.env` (see `.env.example`):
 # Install dev dependencies
 pip install -e ".[dev]"
 
+# Optional: Redis session persistence
+pip install -e ".[redis]"
+
 # Run unit tests
 pytest tests/unit/
+
+# Run retrieval quality evaluation (requires Qdrant + models running)
+pytest tests/eval/ -m integration -v
 
 # Run all tests (requires Qdrant + llama.cpp running)
 pytest tests/

@@ -97,6 +97,20 @@
     tick();
   }
 
+  // ── Pipeline steps ──────────────────────────────────────────
+  function renderPipelineSteps(bubble, steps) {
+    if (!steps || steps.length === 0) return;
+    const trail = document.createElement('div');
+    trail.className = 'pipeline-trail';
+    steps.forEach(step => {
+      const span = document.createElement('span');
+      span.className = 'pipeline-step';
+      span.textContent = step;
+      trail.appendChild(span);
+    });
+    bubble.prepend(trail);
+  }
+
   // ── Source cards ────────────────────────────────────────────
   function renderSources(bubble, sources) {
     if (!sources || sources.length === 0) return;
@@ -209,6 +223,7 @@
       messagesEl.appendChild(row);
       scrollToBottom();
 
+      renderPipelineSteps(bubble, data.pipeline_steps);
       typewrite(bubble, data.answer, () => {
         renderSources(bubble, data.sources);
       });

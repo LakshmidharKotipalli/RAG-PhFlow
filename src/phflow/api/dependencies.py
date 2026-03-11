@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from fastapi import Request
 
+from phflow.api.session_store import SessionStore
 from phflow.generation.chain import RAGChain
 from phflow.generation.llm import LlamaCppClient
 from phflow.retrieval.hybrid import HybridRetriever
@@ -22,3 +23,7 @@ def get_chain(request: Request) -> RAGChain:
 
 def get_llm(request: Request) -> LlamaCppClient:
     return request.app.state.llm
+
+
+def get_session_store(request: Request) -> SessionStore:
+    return request.app.state.session_store

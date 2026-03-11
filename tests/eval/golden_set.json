@@ -1,0 +1,68 @@
+[
+  {
+    "id": "gs001",
+    "query": "What are the temperature and humidity requirements for drug storage areas?",
+    "expected_sections": ["211.68", "211.72", "211.110"],
+    "mode": "qa"
+  },
+  {
+    "id": "gs003",
+    "query": "What are the GMP requirements for equipment cleaning and maintenance logs?",
+    "expected_sections": ["211.68", "211.182"],
+    "mode": "qa"
+  },
+  {
+    "id": "gs004",
+    "query": "What is required for batch production records in pharmaceutical manufacturing?",
+    "expected_sections": ["211.188", "211.192"],
+    "mode": "qa"
+  },
+  {
+    "id": "gs006",
+    "query": "What identity and strength tests are required before drug product release?",
+    "expected_sections": ["211.165", "211.167"],
+    "mode": "qa"
+  },
+  {
+    "id": "gs009",
+    "query": "What training is required for personnel handling drug manufacturing?",
+    "expected_sections": ["211.68", "211.25"],
+    "mode": "qa"
+  },
+  {
+    "id": "gs010",
+    "query": "What are the water quality standards for pharmaceutical manufacturing?",
+    "expected_sections": ["211.72", "211.48"],
+    "mode": "qa"
+  },
+  {
+    "id": "gs016",
+    "query": "What are the stability testing requirements for drug products?",
+    "expected_sections": ["211.166", "211.167"],
+    "mode": "qa"
+  },
+  {
+    "id": "gs019",
+    "query": "What are the requirements for drug product expiration dating?",
+    "expected_sections": ["211.137", "211.166"],
+    "mode": "qa"
+  },
+  {
+    "id": "gs020",
+    "query": "What are the packaging and container requirements for pharmaceutical products?",
+    "expected_sections": ["211.94", "211.96"],
+    "mode": "qa"
+  },
+  {
+    "id": "gs022",
+    "query": "What are the requirements for sterility testing of drug products?",
+    "expected_sections": ["211.167", "211.113"],
+    "mode": "qa"
+  },
+  {
+    "id": "gs023",
+    "query": "What are the complaint handling and investigation requirements for drug manufacturers?",
+    "expected_sections": ["211.198"],
+    "mode": "qa"
+  }
+]

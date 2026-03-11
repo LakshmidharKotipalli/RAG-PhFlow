@@ -3,10 +3,9 @@ Hybrid search: dense + BM25 sparse retrieval fused with Reciprocal Rank Fusion (
 via Qdrant's native hybrid query API.
 
 Flow:
-  1. Encode query → dense vector (BGE, with instruction prefix) + sparse vector (BM25)
-  2. Qdrant RRF fusion → top-K candidates
-  3. Reranker → top-N sections
-  4. Parent expansion → full section text for each top-N result
+  1. Encode query -> dense vector (BGE, with instruction prefix) + sparse vector (BM25)
+  2. Qdrant RRF fusion -> top-K candidates
+  3. Parent expansion -> full section text for each top-N result
 """
 
 from __future__ import annotations
@@ -23,15 +22,13 @@ from qdrant_client.models import (
     SparseVector,
 )
 
+from phflow.settings import settings
 from phflow.embeddings.encoder import RegulationEncoder
-from phflow.retrieval.reranker import Reranker
 from phflow.vectorstore.client import scroll_by_node
 
 
 # Exclude authority chunks (amendment history, statutory citations) which are
 # generic boilerplate and dominate BM25 for unrelated queries.
-# Tables are included: CFR tables contain critical compliance data
-# (pesticide tolerances, approved additives, nutrient values, etc.)
 _EXCLUDE_AUTHORITY = Filter(
     must_not=[FieldCondition(key="chunk_type", match=MatchValue(value="authority"))]
 )
@@ -51,18 +48,14 @@ class HybridRetriever:
         qdrant: QdrantClient,
         collection_name: str,
         encoder: RegulationEncoder,
-        reranker: Reranker,
-        initial_k: int = 20,
-        reranker_top_n: int = 5,
-        reranker_score_threshold: float = 0.5,
+        initial_k: int | None = None,
+        top_n: int | None = None,
     ) -> None:
         self.qdrant = qdrant
         self.collection_name = collection_name
         self.encoder = encoder
-        self.reranker = reranker
-        self.initial_k = initial_k
-        self.reranker_top_n = reranker_top_n
-        self.reranker_score_threshold = reranker_score_threshold
+        self.initial_k = initial_k or settings.initial_retrieval_k
+        self.top_n = top_n or settings.retrieval_top_n
         self._sparse_model = SparseTextEmbedding(model_name="Qdrant/bm25")
 
     def _encode_sparse(self, text: str) -> SparseVector:
@@ -81,14 +74,16 @@ class HybridRetriever:
         logger=None,
     ) -> list[dict]:
         """
-        Retrieve and rerank relevant sections for a query.
+        Retrieve relevant sections for a query using RRF-fused hybrid search.
 
         Returns a list of dicts, each representing one unique section with:
           - section_number, section_title, section_node
           - full_text (all chunks concatenated, for generation context)
-          - score (from reranker)
+          - score (RRF fusion score)
           - metadata (full payload from best matching chunk)
         """
+        effective_top_n = top_n or self.top_n
+
         # Encode query
         dense_vec = self.encoder.encode_query(query)
         sparse_vec = self._encode_sparse(query)
@@ -97,7 +92,7 @@ class HybridRetriever:
         search_filter = _merge_filters(qdrant_filter, _EXCLUDE_AUTHORITY)
 
         # Hybrid search via Qdrant native RRF
-        prefetch_limit = self.initial_k * 2
+        prefetch_limit = self.initial_k * settings.prefetch_multiplier
         response = self.qdrant.query_points(
             collection_name=self.collection_name,
             prefetch=[
@@ -122,35 +117,20 @@ class HybridRetriever:
 
         if not candidates:
             if logger:
-                logger.log("RETRIEVAL (pre-rerank)", "No candidates returned from Qdrant.")
+                logger.log("RETRIEVAL", "No candidates returned from Qdrant.")
             return []
 
+        # Take top-N by RRF score
+        top_candidates = candidates[:effective_top_n]
+
         if logger:
-            logger.log("RETRIEVAL (pre-rerank)", [
+            logger.log("RETRIEVAL (RRF top-N)", [
                 {
                     "section_number": c.payload.get("section_number", ""),
                     "section_title": c.payload.get("section_title", ""),
                     "rrf_score": round(c.score, 6),
                 }
-                for c in candidates
-            ])
-
-        # Rerank candidates
-        reranked = self.reranker.rerank(
-            query,
-            candidates,
-            top_n=top_n or self.reranker_top_n,
-            score_threshold=self.reranker_score_threshold,
-        )
-
-        if logger:
-            logger.log("RERANKING (post-rerank, actual yes/no probability)", [
-                {
-                    "section_number": c.payload.get("section_number", ""),
-                    "section_title": c.payload.get("section_title", ""),
-                    "reranker_probability": round(score, 6),
-                }
-                for score, c in reranked
+                for c in top_candidates
             ])
 
         if not expand_to_parent:
@@ -160,33 +140,52 @@ class HybridRetriever:
                     "section_title": c.payload.get("section_title", ""),
                     "section_node": c.payload.get("section_node", ""),
                     "full_text": c.payload.get("chunk_text", ""),
-                    "score": score,
+                    "score": c.score,
                     "metadata": c.payload,
                 }
-                for score, c in reranked
+                for c in top_candidates
             ]
 
         # Parent expansion: fetch full section for each unique section_node
         results: list[dict] = []
         seen_nodes: set[str] = set()
 
-        for score, chunk in reranked:
+        for chunk in top_candidates:
             node = chunk.payload.get("section_node", "")
             if node in seen_nodes:
                 continue
             seen_nodes.add(node)
 
             siblings = scroll_by_node(self.qdrant, self.collection_name, node)
-            full_text = "\n\n".join(
-                s.payload.get("chunk_text", "") for s in siblings
-            )
+
+            # Concatenate sibling chunks into one full section text.
+            # Keep the header from the first chunk only; strip it from
+            # subsequent chunks so the same header does not repeat.
+            texts: list[str] = []
+            for i, s in enumerate(siblings):
+                text = s.payload.get("chunk_text", "")
+                if i > 0:
+                    lines = text.splitlines()
+                    header_dropped = 0
+                    start = 0
+                    for j, line in enumerate(lines):
+                        if header_dropped < 2:
+                            if line.strip():
+                                header_dropped += 1
+                        else:
+                            start = j
+                            break
+                    text = "\n".join(lines[start:]).lstrip("\n")
+                texts.append(text)
+
+            full_text = "\n\n".join(texts)
 
             results.append({
                 "section_number": chunk.payload.get("section_number", ""),
                 "section_title": chunk.payload.get("section_title", ""),
                 "section_node": node,
                 "full_text": full_text,
-                "score": score,
+                "score": chunk.score,
                 "metadata": chunk.payload,
             })
 

@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Request
+
+logger = logging.getLogger(__name__)
 
 from phflow.api.schemas import ComponentHealth, HealthResponse
 
@@ -17,7 +21,8 @@ async def health_check(request: Request) -> HealthResponse:
         info = qdrant.get_collections()
         components["qdrant"] = ComponentHealth(status="ok")
     except Exception as exc:
-        components["qdrant"] = ComponentHealth(status="error", detail=str(exc))
+        logger.warning("Qdrant health check failed: %s", exc)
+        components["qdrant"] = ComponentHealth(status="error", detail="Qdrant unreachable")
 
     # Check llama.cpp server
     try:
@@ -28,7 +33,8 @@ async def health_check(request: Request) -> HealthResponse:
             detail="" if ok else "llama.cpp server unreachable or model not loaded",
         )
     except Exception as exc:
-        components["llama_cpp"] = ComponentHealth(status="error", detail=str(exc))
+        logger.warning("llama.cpp health check failed: %s", exc)
+        components["llama_cpp"] = ComponentHealth(status="error", detail="llama.cpp server unreachable")
 
     # Encoder is always loaded synchronously at startup — mark ok if we got here
     components["encoder"] = ComponentHealth(status="ok")

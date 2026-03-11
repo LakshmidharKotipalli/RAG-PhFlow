@@ -20,7 +20,7 @@ from collections.abc import AsyncIterator
 
 import httpx
 
-from phflow.config.settings import settings
+from phflow.settings import settings
 
 
 class LlamaCppClient:
@@ -42,6 +42,9 @@ class LlamaCppClient:
         self.temperature = temperature if temperature is not None else settings.llama_cpp_temperature
         self.num_ctx = num_ctx if num_ctx is not None else settings.llama_cpp_num_ctx
         self.max_tokens = max_tokens if max_tokens is not None else settings.llama_cpp_max_tokens
+        self.repeat_penalty = settings.llama_cpp_repeat_penalty
+        self.repeat_last_n = settings.llama_cpp_repeat_last_n
+        self.frequency_penalty = settings.llama_cpp_frequency_penalty
         self._client = httpx.AsyncClient(timeout=timeout)
 
     # EOS / role tokens sent to llama.cpp as stop sequences.
@@ -53,10 +56,20 @@ class LlamaCppClient:
         "</s>", "<|endoftext|>", "<|eot_id|>",
     ]
 
-    # Section labels that should be stripped from the start/end of the
-    # generated text if the model leaks them, but must NOT be stop sequences.
+    # Section labels stripped from start/end of generated text if the model
+    # leaks them. Newline-prefixed versions are also used as stop sequences
+    # (see _ECHO_STOP_SEQUENCES) to catch prompt echo loops.
     _LABEL_TOKENS = [
         "INSTRUCTIONS:", "CONTEXT:", "QUESTION:", "CONVERSATION HISTORY:", "Answer:",
+    ]
+
+    # Prompt-section labels used as STOP sequences to halt generation
+    # if the model starts echoing the prompt structure back.
+    _ECHO_STOP_SEQUENCES = [
+        "\nCONTEXT:",
+        "\nQUESTION:",
+        "\nINSTRUCTIONS:",
+        "\nCONVERSATION HISTORY:",
     ]
 
     def _payload(self, prompt: str, stream: bool) -> dict:
@@ -67,12 +80,12 @@ class LlamaCppClient:
             "top_p": 0.9,
             "n_ctx": self.num_ctx,
             "stream": stream,
-            "stop": self._EOS_TOKENS,
+            "stop": self._EOS_TOKENS + self._ECHO_STOP_SEQUENCES,
             # Penalise repeated token sequences to prevent the model from
             # looping on the SOURCES_USED line or echoing the prompt back.
-            "repeat_penalty": 1.1,
-            "repeat_last_n": 256,
-            "frequency_penalty": 0.1,
+            "repeat_penalty": self.repeat_penalty,
+            "repeat_last_n": self.repeat_last_n,
+            "frequency_penalty": self.frequency_penalty,
         }
 
     @classmethod

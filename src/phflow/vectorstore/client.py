@@ -9,7 +9,7 @@ import uuid
 from qdrant_client import QdrantClient
 from qdrant_client.models import PointStruct, SparseVector
 
-from phflow.config.settings import settings
+from phflow.settings import settings
 
 
 def get_qdrant_client() -> QdrantClient:

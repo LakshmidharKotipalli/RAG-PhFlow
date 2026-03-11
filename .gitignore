@@ -14,7 +14,6 @@ venv/
 env/
 
 # Environment
-.env
 
 # Data files (large — use Git LFS or store separately)
 data/ecfr-title-21/ECFR-title21.xml
@@ -47,3 +46,5 @@ htmlcov/
 # Logs
 *.log
 query_logs/
+
+questions.txt

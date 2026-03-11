@@ -61,6 +61,7 @@ class ChatResponse(BaseModel):
     answer: str
     sources: list[SourceResult]
     mode: str
+    pipeline_steps: list[str] = []   # backend stage labels shown in the UI
 
 
 # --- Parts listing ---

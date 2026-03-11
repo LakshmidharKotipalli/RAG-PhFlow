@@ -1,3 +1,10 @@
+"""
+Centralized application settings.
+
+All values are read from the .env file at the project root via pydantic-settings.
+Edit .env to change any setting; restart the API server after changes.
+"""
+
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -18,22 +25,33 @@ class Settings(BaseSettings):
     # llama.cpp server (scheme is added automatically if missing)
     llama_cpp_url: str = "http://localhost:8080"
     llama_cpp_temperature: float = 0.1
-    llama_cpp_num_ctx: int = 65536   # -c / --ctx-size when launching server
-    llama_cpp_max_tokens: int = 2048
+    llama_cpp_num_ctx: int = 65536
+    llama_cpp_max_tokens: int = 768
+    llama_cpp_repeat_penalty: float = 1.1
+    llama_cpp_repeat_last_n: int = 256
+    llama_cpp_frequency_penalty: float = 0.1
 
-    # Reranker
-    reranker_model: str = "BAAI/bge-reranker-base"
+    # Sessions
+    session_max_messages: int = 100
 
     # Retrieval
-    initial_retrieval_k: int = 40
-    reranker_top_n: int = 5
-    reranker_score_threshold: float = 0.25  # minimum yes-probability to pass reranker filter
+    initial_retrieval_k: int = 10
+    retrieval_top_n: int = 5    # how many top RRF results to send to the LLM
+    prefetch_multiplier: int = 2
+    enable_query_rewrite: bool = True
+    redis_url: str | None = None
+    cors_origins: list[str] = ["http://localhost:8000", "http://127.0.0.1:8000"]
+    scope_part_numbers: list[int] = [210, 211]
 
     # Chunking
     chunk_max_tokens: int = 512
+
     # Data paths (relative to project root)
     xml_path: str = "data/ecfr-title-21/ECFR-title21.xml"
     versions_path: str = "data/ecfr-title-21/versions-title-21.json"
+
+    # System prompt
+    system_prompt_path: str = "prompts/system_prompt.txt"
 
     @property
     def llama_cpp_base_url(self) -> str:

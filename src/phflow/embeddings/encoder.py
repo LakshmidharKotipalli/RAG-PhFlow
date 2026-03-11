@@ -15,6 +15,11 @@ from sentence_transformers import SentenceTransformer
 # BGE instruction prefix for query-side encoding (improves retrieval alignment)
 _BGE_QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
 
+# Simple LRU-style query vector cache — avoids re-encoding repeated queries.
+# Keyed on the full prefixed string; evicts oldest entry when capacity is exceeded.
+_QUERY_CACHE: dict[str, list[float]] = {}
+_QUERY_CACHE_MAX = 256
+
 
 class RegulationEncoder:
     def __init__(
@@ -39,10 +44,24 @@ class RegulationEncoder:
         return vectors.tolist()
 
     def encode_query(self, query: str) -> list[float]:
-        """Encode a query string with BGE instruction prefix for asymmetric retrieval."""
+        """Encode a query string with BGE instruction prefix for asymmetric retrieval.
+
+        Results are cached by full prefixed string (up to _QUERY_CACHE_MAX entries).
+        The model is deterministic, so repeated queries return the same vector.
+        """
+        cache_key = _BGE_QUERY_PREFIX + query
+        if cache_key in _QUERY_CACHE:
+            return _QUERY_CACHE[cache_key]
+
         vector = self.model.encode(
-            _BGE_QUERY_PREFIX + query,
+            cache_key,
             normalize_embeddings=True,
             convert_to_numpy=True,
         )
-        return vector.tolist()
+        result = vector.tolist()
+
+        if len(_QUERY_CACHE) >= _QUERY_CACHE_MAX:
+            # Evict the oldest entry (insertion-order guaranteed in Python 3.7+)
+            _QUERY_CACHE.pop(next(iter(_QUERY_CACHE)))
+        _QUERY_CACHE[cache_key] = result
+        return result
