@@ -243,29 +243,50 @@ OFF_TOPIC_MESSAGE = (
 )
 
 
-def build_scope_gate_prompt(query: str) -> str:
+def build_scope_and_rewrite_prompt(query: str) -> str:
     """
-    Build a prompt that classifies whether a query is in-scope for
-    pharmaceutical warehouse dock-to-stock operations under 21 CFR 210/211.
+    Combined scope gate + query rewrite in a single LLM call.
 
-    Returns a prompt expecting a single-word YES or NO response.
+    Returns a prompt that:
+    - If in-scope: outputs "IN_SCOPE: <rewritten query>"
+    - If out-of-scope: outputs "OUT_OF_SCOPE"
     """
     return (
         "INSTRUCTIONS:\n"
-        "You are a scope classifier for a pharmaceutical regulatory Q&A system.\n"
+        "You are a scope classifier AND query rewriter for a pharmaceutical "
+        "regulatory search system used by warehouse and manufacturing staff.\n\n"
+        "STEP 1 — SCOPE CHECK:\n"
         "The system ONLY answers questions about pharmaceutical warehouse "
         "dock-to-stock operations — receiving, inspection, sampling, quarantine, "
         "storage, temperature control, labeling, rejection, release, and related "
         "GMP requirements under FDA 21 CFR Parts 210 and 211.\n\n"
-        "Decide if the following question is in-scope.\n\n"
-        "In-scope examples: receiving a shipment, temperature excursions, "
-        "quarantine procedures, rejected materials, storage conditions, "
-        "equipment cleaning, component testing, container integrity, "
-        "deviation handling, batch records, quality control unit responsibilities.\n\n"
-        "Out-of-scope examples: weather, cooking recipes, unrelated medical questions, "
-        "general science, non-pharmaceutical regulations, clinical trials, "
-        "drug efficacy, patient treatment.\n\n"
-        "Reply with ONLY one word: YES if in-scope, NO if out-of-scope.\n\n"
+        "In-scope: receiving shipments, temperature excursions, quarantine, "
+        "rejected materials, storage conditions, equipment cleaning, component testing, "
+        "container integrity, deviation handling, batch records, quality control unit.\n"
+        "Out-of-scope: weather, cooking, general medical, general science, "
+        "non-pharmaceutical regulations, clinical trials, drug efficacy, patient treatment.\n\n"
+        "STEP 2 — REWRITE (only if in-scope):\n"
+        "Rewrite the question into formal CFR regulatory terminology.\n\n"
+        "Vocabulary mapping:\n"
+        "- pallet / carton / box / shipment → container / outer container / shipment\n"
+        "- leakage / leak / spill → contaminated / damaged container / deteriorated\n"
+        "- accept / reject a delivery → receipt / receiving / acceptance criteria\n"
+        "- temperature logger / data logger → temperature monitoring / temperature recording equipment\n"
+        "- power failure / power outage → equipment failure / loss of temperature control\n"
+        "- lot mix-up / mix together → commingling / mixup / segregation\n"
+        "- bin / shelf / rack → storage area / storage conditions\n"
+        "- quarantine area / hold area → quarantine / withheld from use\n"
+        "- quality team / QA / quality unit → quality control unit\n"
+        "- temperature-sensitive → temperature-controlled / cold chain / storage requirements\n"
+        "- material / raw material / ingredient → component / drug product component\n"
+        "- what do I do / what should I do / how to handle → regulatory requirements for / procedures for deviation from\n"
+        "- not stored / not in storage / left out / found outside → deviation from storage requirements / failure to store\n"
+        "- wrong temperature / too hot / too cold / not refrigerated → deviation from temperature storage conditions\n\n"
+        "If the user asks what to do or how to handle a situation, rewrite as a query "
+        "for the regulatory requirements that apply to that situation.\n\n"
+        "OUTPUT FORMAT (strictly one line, no explanation):\n"
+        "- If in-scope: IN_SCOPE: <rewritten query in under 20 words>\n"
+        "- If out-of-scope: OUT_OF_SCOPE\n\n"
         f"QUESTION:\n{query}\n\n"
-        "Answer:"
+        "Output:"
     )

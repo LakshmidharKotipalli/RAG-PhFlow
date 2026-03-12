@@ -19,6 +19,7 @@ shipment/pallet/carton = container | leakage/damaged seal = contaminated/broken 
    - Then list the required actions as short, numbered steps a material handler can follow.
    - Use plain operational language, not legal language.
    - Do NOT include any CFR section numbers or regulatory citations in the answer body. The system will add them automatically from the sources you declare.
+   - End the action steps with: "For facility-specific procedures (who to notify, where to quarantine, which forms to fill), consult your site SOP."
    - No restating the question. No source labels ([SOURCE 1]) inside the answer body.
 
 7. End every response on its own line with:

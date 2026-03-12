@@ -19,8 +19,7 @@ from phflow.generation.prompts import (
     build_prompt,
     build_query_decomposition_prompt,
     build_retrieval_query,
-    build_retrieval_rewrite_prompt,
-    build_scope_gate_prompt,
+    build_scope_and_rewrite_prompt,
 )
 from phflow.retrieval.filters import build_filter, extract_filters_from_query
 from phflow.retrieval.hybrid import HybridRetriever
@@ -139,26 +138,34 @@ class RAGChain:
 
         clean_query = query
 
-        # Stage 0: Scope gate — reject off-topic queries before burning LLM calls
-        scope_prompt = build_scope_gate_prompt(clean_query)
-        scope_response = (await self.llm.correct_query(scope_prompt)).strip().upper()
-        qlog.log("SCOPE GATE", scope_response)
+        # Stage 0+1: Combined scope gate + query rewrite (single LLM call)
+        scope_rewrite_prompt = build_scope_and_rewrite_prompt(clean_query)
+        scope_rewrite_response = (await self.llm.correct_query(scope_rewrite_prompt)).strip()
+        qlog.log("SCOPE+REWRITE", scope_rewrite_response)
 
-        if scope_response.startswith("NO"):
+        if scope_rewrite_response.upper().startswith("OUT_OF_SCOPE"):
             pipeline_steps.append("Query rejected — out of scope")
             qlog.log("FINAL ANSWER", OFF_TOPIC_MESSAGE)
             qlog.save_json()
+            if stream:
+                async def _stream_rejection():
+                    for step in pipeline_steps:
+                        yield f"[PIPELINE] {step}\n"
+                    yield OFF_TOPIC_MESSAGE
+                return _stream_rejection()
             return {"answer": OFF_TOPIC_MESSAGE, "sources": [], "pipeline_steps": pipeline_steps}
 
         pipeline_steps.append("Query in scope")
 
-        # Stage 1: Query rewrite
-        if settings.enable_query_rewrite:
+        # Extract rewritten query from "IN_SCOPE: <query>"
+        if scope_rewrite_response.upper().startswith("IN_SCOPE:"):
+            retrieval_query = scope_rewrite_response.split(":", 1)[1].strip()
             pipeline_steps.append("Rewriting query to CFR terminology")
-            rewrite_prompt = build_retrieval_rewrite_prompt(clean_query, conversation_history=None)
-            rewritten = await self.llm.correct_query(rewrite_prompt)
-            retrieval_query = rewritten if rewritten else build_retrieval_query(history, clean_query)
         else:
+            # Fallback: use raw response as the rewritten query
+            retrieval_query = scope_rewrite_response.strip()
+
+        if not retrieval_query:
             retrieval_query = build_retrieval_query(history, clean_query)
         qlog.log("RETRIEVAL QUERY", retrieval_query)
 
@@ -239,6 +246,12 @@ class RAGChain:
             qlog.log("FINAL ANSWER", INSUFFICIENT_MESSAGE)
             qlog.log("SOURCES DECLARED BY LLM", [])
             qlog.save_json()
+            if stream:
+                async def _stream_insufficient():
+                    for step in pipeline_steps:
+                        yield f"[PIPELINE] {step}\n"
+                    yield INSUFFICIENT_MESSAGE
+                return _stream_insufficient()
             return {"answer": INSUFFICIENT_MESSAGE, "sources": [], "pipeline_steps": pipeline_steps}
 
         # Stage 5: Prompt assembly

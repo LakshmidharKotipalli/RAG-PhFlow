@@ -256,6 +256,76 @@ details.source-card[open] summary::before {
   white-space: pre-wrap;
 }
 
+/* ── Structured answer ────────────────────────────────────── */
+.answer-verdict {
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--accent);
+  margin-bottom: 10px;
+  line-height: 1.5;
+}
+
+.answer-text {
+  margin-bottom: 10px;
+  line-height: 1.6;
+}
+
+.answer-steps {
+  margin: 8px 0 12px 20px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.answer-steps li {
+  line-height: 1.55;
+  padding-left: 4px;
+}
+
+.answer-steps li::marker {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.answer-sop-footer {
+  margin-top: 10px;
+  padding: 8px 12px;
+  background: var(--surface-2);
+  border-left: 3px solid var(--accent-dim);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+/* ── Suggested questions ──────────────────────────────────── */
+#suggested-questions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 4px;
+}
+
+.suggestion {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 8px 16px;
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  text-align: left;
+  line-height: 1.4;
+}
+
+.suggestion:hover {
+  border-color: var(--accent);
+  background: var(--surface);
+}
+
 /* ── Input area ───────────────────────────────────────────── */
 #input-area {
   flex-shrink: 0;
