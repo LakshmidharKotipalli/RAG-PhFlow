@@ -7,11 +7,15 @@ into a single end-to-end call.
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import re
 from collections.abc import AsyncIterator
 
 from phflow.settings import settings
+from phflow.generation.cache import SemanticCache
 from phflow.generation.citations import format_context_block, source_summary
+from phflow.generation.grounding import check_grounding
 from phflow.generation.llm import LlamaCppClient
 from phflow.generation.prompts import (
     INSUFFICIENT_MESSAGE,
@@ -24,6 +28,8 @@ from phflow.generation.prompts import (
 from phflow.retrieval.filters import build_filter, extract_filters_from_query
 from phflow.retrieval.hybrid import HybridRetriever
 from phflow.utils.query_logger import QueryLogger
+
+_log = logging.getLogger(__name__)
 
 
 
@@ -110,6 +116,11 @@ class RAGChain:
     def __init__(self, retriever: HybridRetriever, llm: LlamaCppClient) -> None:
         self.retriever = retriever
         self.llm = llm
+        self._cache = SemanticCache(
+            threshold=settings.cache_similarity_threshold,
+            max_size=settings.cache_max_size,
+            ttl_seconds=settings.cache_ttl_seconds,
+        )
 
     async def run(
         self,
@@ -135,6 +146,26 @@ class RAGChain:
         qlog = QueryLogger(query)
         qlog.log("ORIGINAL QUERY", query)
         pipeline_steps: list[str] = []
+
+        # ── Semantic cache check (skips entire pipeline on hit) ──
+        query_embedding = self.retriever.encoder.encode_query(query)
+        if settings.cache_enabled:
+            cached = self._cache.lookup(query_embedding)
+            if cached and not stream:
+                qlog.log("CACHE", "HIT")
+                qlog.save_json()
+                _log.info("Semantic cache hit for query: %s", query[:80])
+                cached_response = dict(cached)
+                cached_response["pipeline_steps"] = ["Semantic cache hit"]
+                return cached_response
+            if cached and stream:
+                qlog.log("CACHE", "HIT (stream)")
+                qlog.save_json()
+
+                async def _stream_cached():
+                    yield "[PIPELINE] Semantic cache hit\n"
+                    yield cached["answer"]
+                return _stream_cached()
 
         clean_query = query
 
@@ -207,16 +238,22 @@ class RAGChain:
         if len(sub_queries) > 1:
             pipeline_steps.append(f"Decomposed into {len(sub_queries)} sub-queries")
 
-        # Retrieve for each sub-query, union results by section_number
+        # Retrieve for each sub-query in parallel, union results by section_number
         pipeline_steps.append("Retrieving relevant regulatory sections")
-        all_sections: dict[str, dict] = {}
-        for sq in sub_queries:
-            results = self.retriever.search(
+
+        async def _retrieve(sq: str) -> list[dict]:
+            return await asyncio.to_thread(
+                self.retriever.search,
                 query=sq,
                 search_filter=search_filter,
                 expand_to_parent=expand_to_parent,
                 logger=qlog,
             )
+
+        retrieval_results = await asyncio.gather(*[_retrieve(sq) for sq in sub_queries])
+
+        all_sections: dict[str, dict] = {}
+        for results in retrieval_results:
             for s in results:
                 sn = s.get("section_number", "")
                 if sn not in all_sections or s.get("score", 0) > all_sections[sn].get("score", 0):
@@ -329,14 +366,37 @@ class RAGChain:
             answer = INSUFFICIENT_MESSAGE
             used_sources = []
 
+        # Grounding verification — reject answers not supported by context
+        if answer != INSUFFICIENT_MESSAGE:
+            is_grounded, grounding_score, grounding_details = check_grounding(
+                answer=answer,
+                sections=sections,
+                encoder=self.retriever.encoder,
+            )
+            qlog.log("GROUNDING CHECK", {
+                "is_grounded": is_grounded,
+                "score": round(grounding_score, 4),
+                "details": grounding_details,
+            })
+            if not is_grounded:
+                pipeline_steps.append("Answer failed grounding check")
+                answer = INSUFFICIENT_MESSAGE
+                used_sources = []
+
         qlog.log("FINAL ANSWER", answer)
         qlog.log("SOURCES DECLARED BY LLM", [
             s.get("section_number", "") for s in used_sources
         ])
         qlog.save_json()
 
-        return {
+        response = {
             "answer": answer,
             "sources": used_sources,
             "pipeline_steps": pipeline_steps,
         }
+
+        # Store in semantic cache (skip insufficient answers — not worth caching)
+        if settings.cache_enabled and answer != INSUFFICIENT_MESSAGE:
+            self._cache.store(query, query_embedding, response)
+
+        return response

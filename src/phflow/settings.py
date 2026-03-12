@@ -36,6 +36,12 @@ class Settings(BaseSettings):
     # Sessions
     session_max_messages: int = 100
 
+    # Semantic cache (disabled by default — enable after feedback loop is in place)
+    cache_enabled: bool = False
+    cache_similarity_threshold: float = 0.95  # cosine similarity for cache hit
+    cache_max_size: int = 512
+    cache_ttl_seconds: int = 3600             # 1 hour
+
     # Retrieval
     initial_retrieval_k: int = 10
     retrieval_top_n: int = 5    # how many top RRF results to send to the LLM
