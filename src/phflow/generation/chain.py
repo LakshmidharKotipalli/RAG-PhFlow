@@ -144,53 +144,243 @@ class RAGChain:
           - citations_footer: str
         Or an async iterator of token strings if stream=True.
         """
+        if stream:
+            return self._run_stream(
+                query=query,
+                mode=mode,
+                conversation_history=conversation_history,
+                part_number=part_number,
+                chapter_number=chapter_number,
+                amended_after=amended_after,
+                expand_to_parent=expand_to_parent,
+            )
+        return await self._run_sync(
+            query=query,
+            mode=mode,
+            conversation_history=conversation_history,
+            part_number=part_number,
+            chapter_number=chapter_number,
+            amended_after=amended_after,
+            expand_to_parent=expand_to_parent,
+        )
+
+    async def _run_stream(
+        self,
+        query: str,
+        mode: str = "qa",
+        conversation_history: list[dict] | None = None,
+        part_number: int | None = None,
+        chapter_number: str | None = None,
+        amended_after: str | None = None,
+        expand_to_parent: bool = True,
+    ) -> AsyncIterator[str]:
+        """
+        Streaming pipeline — yields [PIPELINE] steps in real-time as each
+        stage completes, then LLM tokens, then [SOURCES] JSON.
+        """
+        import json as _json
+
+        history = conversation_history or []
+        qlog = QueryLogger(query)
+        qlog.log("ORIGINAL QUERY", query)
+
+        def step(msg: str) -> str:
+            return f"[PIPELINE] {msg}\n"
+
+        # ── Semantic cache ──
+        query_embedding = self.retriever.encoder.encode_query(query)
+        if settings.cache_enabled:
+            cached = self._cache.lookup(query_embedding)
+            if cached:
+                qlog.log("CACHE", "HIT (stream)")
+                qlog.save_json()
+                yield step("Semantic cache hit")
+                yield cached["answer"]
+                _cached_sources = cached.get("sources", [])
+                if _cached_sources:
+                    yield "\n[SOURCES] " + _json.dumps(_cached_sources) + "\n"
+                return
+
+        clean_query = query
+
+        # ── Vague query guard ──
+        if len(clean_query.split()) < _MIN_QUERY_WORDS:
+            yield step("Query too vague — asking for clarification")
+            qlog.log("FINAL ANSWER", VAGUE_QUERY_MESSAGE)
+            qlog.save_json()
+            yield VAGUE_QUERY_MESSAGE
+            return
+
+        # Stage 0+1: Scope gate + query rewrite
+        yield step("Checking scope & rewriting query")
+        scope_rewrite_prompt = build_scope_and_rewrite_prompt(clean_query)
+        scope_rewrite_response = (await self.llm.correct_query(scope_rewrite_prompt)).strip()
+        qlog.log("SCOPE+REWRITE", scope_rewrite_response)
+
+        if scope_rewrite_response.upper().startswith("OUT_OF_SCOPE"):
+            yield step("Query rejected — out of scope")
+            qlog.log("FINAL ANSWER", OFF_TOPIC_MESSAGE)
+            qlog.save_json()
+            yield OFF_TOPIC_MESSAGE
+            return
+
+        yield step("Query in scope")
+
+        if scope_rewrite_response.upper().startswith("IN_SCOPE:"):
+            retrieval_query = scope_rewrite_response.split(":", 1)[1].strip()
+            yield step("Rewritten to CFR terminology")
+        else:
+            retrieval_query = scope_rewrite_response.strip()
+
+        if not retrieval_query:
+            retrieval_query = build_retrieval_query(history, clean_query)
+        qlog.log("RETRIEVAL QUERY", retrieval_query)
+
+        # Stage 2: Filter extraction
+        filter_kwargs = extract_filters_from_query(
+            clean_query,
+            {
+                "part_number": part_number,
+                "section_number": None,
+                "chapter_number": chapter_number,
+                "amended_after": amended_after,
+            },
+        )
+        explicit_part = filter_kwargs["part_number"]
+        scope = settings.scope_part_numbers if not explicit_part else None
+
+        search_filter = build_filter(
+            part_number=explicit_part,
+            part_numbers=scope or None,
+            section_number=filter_kwargs.get("section_number"),
+            chapter_number=filter_kwargs["chapter_number"],
+            amended_after=filter_kwargs["amended_after"],
+            exclude_removed=True,
+        )
+
+        # Stage 3: Query decomposition
+        yield step("Decomposing query")
+        decomp_prompt = build_query_decomposition_prompt(retrieval_query)
+        decomp_raw = await self.llm.correct_query(decomp_prompt)
+        sub_queries = [q.strip() for q in decomp_raw.strip().splitlines() if q.strip()]
+        if not sub_queries:
+            sub_queries = [retrieval_query]
+        qlog.log("SUB-QUERIES", sub_queries)
+
+        if len(sub_queries) > 1:
+            yield step(f"Decomposed into {len(sub_queries)} sub-queries")
+
+        # Stage 4: Retrieval
+        yield step("Retrieving regulatory sections")
+
+        async def _retrieve(sq: str) -> list[dict]:
+            return await asyncio.to_thread(
+                self.retriever.search,
+                query=sq,
+                search_filter=search_filter,
+                expand_to_parent=expand_to_parent,
+                logger=qlog,
+            )
+
+        retrieval_results = await asyncio.gather(*[_retrieve(sq) for sq in sub_queries])
+
+        all_sections: dict[str, dict] = {}
+        for results in retrieval_results:
+            for s in results:
+                sn = s.get("section_number", "")
+                if sn not in all_sections or s.get("score", 0) > all_sections[sn].get("score", 0):
+                    all_sections[sn] = s
+
+        sections = sorted(all_sections.values(), key=lambda s: s.get("score", 0), reverse=True)
+        sections = sections[:self.retriever.top_n]
+
+        qlog.log("SECTIONS PASSED TO LLM", [
+            {
+                "section_number": s.get("section_number", ""),
+                "section_title": s.get("section_title", ""),
+                "rrf_score": s.get("score", 0.0),
+                "full_text_chars": len(s.get("full_text", "")),
+            }
+            for s in sections
+        ])
+
+        n = len(sections)
+        yield step(
+            f"Found {n} section{'s' if n != 1 else ''}"
+            if sections else "No relevant sections found"
+        )
+
+        if not sections:
+            qlog.log("FINAL ANSWER", INSUFFICIENT_MESSAGE)
+            qlog.log("SOURCES DECLARED BY LLM", [])
+            qlog.save_json()
+            yield INSUFFICIENT_MESSAGE
+            return
+
+        # Stage 5: Prompt assembly
+        yield step("Assembling prompt")
+        context = format_context_block(sections)
+        prompt = build_prompt(
+            context=context,
+            question=clean_query,
+            conversation_history=history,
+        )
+        qlog.log("ASSEMBLED PROMPT", prompt)
+
+        # Stage 6: LLM generation
+        yield step("Generating answer")
+        qlog.save_json()
+
+        accumulated: list[str] = []
+        async for token in self.llm.stream(prompt):
+            accumulated.append(token)
+            yield token
+
+        # Post-stream: resolve sources
+        raw = "".join(accumulated)
+        all_src = source_summary(sections)
+        _, used = _parse_used_sources(raw, all_src)
+        sources_to_send = used if used else all_src
+        yield "\n[SOURCES] " + _json.dumps(sources_to_send) + "\n"
+
+    async def _run_sync(
+        self,
+        query: str,
+        mode: str = "qa",
+        conversation_history: list[dict] | None = None,
+        part_number: int | None = None,
+        chapter_number: str | None = None,
+        amended_after: str | None = None,
+        expand_to_parent: bool = True,
+    ) -> dict:
+        """Non-streaming pipeline — returns a dict with answer, sources, pipeline_steps."""
         history = conversation_history or []
         qlog = QueryLogger(query)
         qlog.log("ORIGINAL QUERY", query)
         pipeline_steps: list[str] = []
 
-        # ── Semantic cache check (skips entire pipeline on hit) ──
+        # ── Semantic cache check ──
         query_embedding = self.retriever.encoder.encode_query(query)
         if settings.cache_enabled:
             cached = self._cache.lookup(query_embedding)
-            if cached and not stream:
+            if cached:
                 qlog.log("CACHE", "HIT")
                 qlog.save_json()
                 _log.info("Semantic cache hit for query: %s", query[:80])
                 cached_response = dict(cached)
                 cached_response["pipeline_steps"] = ["Semantic cache hit"]
                 return cached_response
-            if cached and stream:
-                qlog.log("CACHE", "HIT (stream)")
-                qlog.save_json()
-
-                import json as _json_c
-                _cached_sources = cached.get("sources", [])
-
-                async def _stream_cached():
-                    yield "[PIPELINE] Semantic cache hit\n"
-                    yield cached["answer"]
-                    if _cached_sources:
-                        yield "\n[SOURCES] " + _json_c.dumps(_cached_sources) + "\n"
-                return _stream_cached()
 
         clean_query = query
 
-        # ── Vague query guard (skip full pipeline for 1-2 word queries) ──
-        word_count = len(clean_query.split())
-        if word_count < _MIN_QUERY_WORDS:
+        # ── Vague query guard ──
+        if len(clean_query.split()) < _MIN_QUERY_WORDS:
             pipeline_steps.append("Query too vague — asking for clarification")
             qlog.log("FINAL ANSWER", VAGUE_QUERY_MESSAGE)
             qlog.save_json()
-            if stream:
-                async def _stream_vague():
-                    for step in pipeline_steps:
-                        yield f"[PIPELINE] {step}\n"
-                    yield VAGUE_QUERY_MESSAGE
-                return _stream_vague()
             return {"answer": VAGUE_QUERY_MESSAGE, "sources": [], "pipeline_steps": pipeline_steps}
 
-        # Stage 0+1: Combined scope gate + query rewrite (single LLM call)
+        # Stage 0+1: Combined scope gate + query rewrite
         scope_rewrite_prompt = build_scope_and_rewrite_prompt(clean_query)
         scope_rewrite_response = (await self.llm.correct_query(scope_rewrite_prompt)).strip()
         qlog.log("SCOPE+REWRITE", scope_rewrite_response)
@@ -199,22 +389,14 @@ class RAGChain:
             pipeline_steps.append("Query rejected — out of scope")
             qlog.log("FINAL ANSWER", OFF_TOPIC_MESSAGE)
             qlog.save_json()
-            if stream:
-                async def _stream_rejection():
-                    for step in pipeline_steps:
-                        yield f"[PIPELINE] {step}\n"
-                    yield OFF_TOPIC_MESSAGE
-                return _stream_rejection()
             return {"answer": OFF_TOPIC_MESSAGE, "sources": [], "pipeline_steps": pipeline_steps}
 
         pipeline_steps.append("Query in scope")
 
-        # Extract rewritten query from "IN_SCOPE: <query>"
         if scope_rewrite_response.upper().startswith("IN_SCOPE:"):
             retrieval_query = scope_rewrite_response.split(":", 1)[1].strip()
             pipeline_steps.append("Rewriting query to CFR terminology")
         else:
-            # Fallback: use raw response as the rewritten query
             retrieval_query = scope_rewrite_response.strip()
 
         if not retrieval_query:
@@ -259,7 +441,6 @@ class RAGChain:
         if len(sub_queries) > 1:
             pipeline_steps.append(f"Decomposed into {len(sub_queries)} sub-queries")
 
-        # Retrieve for each sub-query in parallel, union results by section_number
         pipeline_steps.append("Retrieving relevant regulatory sections")
 
         async def _retrieve(sq: str) -> list[dict]:
@@ -280,7 +461,6 @@ class RAGChain:
                 if sn not in all_sections or s.get("score", 0) > all_sections[sn].get("score", 0):
                     all_sections[sn] = s
 
-        # Sort by best score descending, take top_n
         sections = sorted(all_sections.values(), key=lambda s: s.get("score", 0), reverse=True)
         sections = sections[:self.retriever.top_n]
 
@@ -294,7 +474,6 @@ class RAGChain:
             for s in sections
         ])
 
-        # Stage 4: Reranking result note
         pipeline_steps.append(
             f"Reranked to {len(sections)} section{'s' if len(sections) != 1 else ''}"
             if sections else "No relevant sections found"
@@ -304,12 +483,6 @@ class RAGChain:
             qlog.log("FINAL ANSWER", INSUFFICIENT_MESSAGE)
             qlog.log("SOURCES DECLARED BY LLM", [])
             qlog.save_json()
-            if stream:
-                async def _stream_insufficient():
-                    for step in pipeline_steps:
-                        yield f"[PIPELINE] {step}\n"
-                    yield INSUFFICIENT_MESSAGE
-                return _stream_insufficient()
             return {"answer": INSUFFICIENT_MESSAGE, "sources": [], "pipeline_steps": pipeline_steps}
 
         # Stage 5: Prompt assembly
@@ -321,29 +494,6 @@ class RAGChain:
             conversation_history=history,
         )
         qlog.log("ASSEMBLED PROMPT", prompt)
-
-        # Stage 6: LLM generation (streaming returns the generator; steps sent separately)
-        if stream:
-            pipeline_steps.append("Generating answer")
-            qlog.save_json()
-            _sections = sections  # capture for closure
-
-            async def _stream_with_status():
-                import json as _json
-                for step in pipeline_steps:
-                    yield f"[PIPELINE] {step}\n"
-                accumulated: list[str] = []
-                async for token in self.llm.stream(prompt):
-                    accumulated.append(token)
-                    yield token
-                # Post-stream: resolve sources and send as trailing JSON line
-                raw = "".join(accumulated)
-                all_src = source_summary(_sections)
-                _, used = _parse_used_sources(raw, all_src)
-                sources_to_send = used if used else all_src
-                yield "\n[SOURCES] " + _json.dumps(sources_to_send) + "\n"
-
-            return _stream_with_status()
 
         pipeline_steps.append("Generating answer with LLM")
         raw_answer = await self.llm.generate(prompt)

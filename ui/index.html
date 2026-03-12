@@ -4,6 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>PhFlow — FDA Regulatory Assistant</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
@@ -11,22 +13,27 @@
     <header>
       <div class="header-inner">
         <span class="logo">PhFlow</span>
-        <span class="subtitle">FDA Title 21 CFR Regulatory Assistant</span>
+        <span class="subtitle">21 CFR Parts 210 &amp; 211 &mdash; Dock-to-Stock GMP Assistant</span>
       </div>
     </header>
 
     <main id="chat-container">
       <div id="messages">
-        <div class="message assistant">
-          <div class="bubble">
-            Ask me about warehouse receiving, storage, quarantine, temperature control, and other dock-to-stock GMP requirements under 21 CFR Parts 210 and 211.
+        <!-- Welcome block -->
+        <div id="welcome" class="welcome">
+          <h2 class="welcome-title">What can I help you with?</h2>
+          <p class="welcome-desc">
+            Ask about receiving, quarantine, storage, temperature control, labeling,
+            or any GMP requirement under 21&nbsp;CFR Parts&nbsp;210&nbsp;&amp;&nbsp;211.
+          </p>
+          <div class="suggestions">
+            <button class="chip" data-q="What should I do if a shipment arrives with a broken seal?">Broken seal on shipment</button>
+            <button class="chip" data-q="Do I need to quarantine temperature-sensitive materials on arrival?">Quarantine temp-sensitive materials</button>
+            <button class="chip" data-q="What are the storage requirements for components under GMP?">Component storage requirements</button>
+            <button class="chip" data-q="A material was left out of cold storage overnight. What now?">Material left out of cold storage</button>
+            <button class="chip" data-q="Who is responsible for approving received materials?">Who approves received materials?</button>
+            <button class="chip" data-q="What documentation is required when receiving a shipment?">Receiving documentation</button>
           </div>
-        </div>
-        <div id="suggested-questions">
-          <button class="suggestion" data-query="What should I do if a shipment arrives damaged?">What should I do if a shipment arrives damaged?</button>
-          <button class="suggestion" data-query="Do I need to quarantine temperature-sensitive materials?">Do I need to quarantine temperature-sensitive materials?</button>
-          <button class="suggestion" data-query="What are the storage requirements for components?">What are the storage requirements for components?</button>
-          <button class="suggestion" data-query="A material has been left out of cold storage. What now?">A material has been left out of cold storage. What now?</button>
         </div>
       </div>
     </main>
@@ -35,7 +42,7 @@
       <div class="input-inner">
         <textarea
           id="user-input"
-          placeholder="Ask about FDA regulations…"
+          placeholder="Ask about warehouse GMP requirements..."
           rows="1"
           autofocus
         ></textarea>

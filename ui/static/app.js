@@ -1,379 +1,322 @@
 (() => {
   'use strict';
 
-  const API_BASE = '/api/v1';
+  const API = '/api/v1';
   let sessionId = null;
-  let isLoading = false;
+  let busy = false;
 
-  const messagesEl = document.getElementById('messages');
-  const inputEl    = document.getElementById('user-input');
-  const sendBtn    = document.getElementById('send-btn');
+  const $messages = document.getElementById('messages');
+  const $input    = document.getElementById('user-input');
+  const $send     = document.getElementById('send-btn');
 
-  // ── Auto-resize textarea ────────────────────────────────────
-  function resizeInput() {
-    inputEl.style.height = 'auto';
-    inputEl.style.height = Math.min(inputEl.scrollHeight, 160) + 'px';
+  // ── Textarea auto-resize ───────────────────────────────────
+  function resize() {
+    $input.style.height = 'auto';
+    $input.style.height = Math.min($input.scrollHeight, 160) + 'px';
   }
-
-  inputEl.addEventListener('input', resizeInput);
-
-  inputEl.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      submit();
-    }
+  $input.addEventListener('input', resize);
+  $input.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
   });
+  $send.addEventListener('click', send);
 
-  sendBtn.addEventListener('click', submit);
-
-  // ── Suggested questions ────────────────────────────────────
-  document.querySelectorAll('.suggestion').forEach(btn => {
+  // ── Suggestion chips ───────────────────────────────────────
+  document.querySelectorAll('.chip').forEach(btn => {
     btn.addEventListener('click', () => {
-      inputEl.value = btn.dataset.query;
-      resizeInput();
-      // Remove all suggestions once one is clicked
-      const container = document.getElementById('suggested-questions');
-      if (container) container.remove();
-      submit();
+      $input.value = btn.dataset.q;
+      resize();
+      send();
     });
   });
 
-  // ── DOM helpers ─────────────────────────────────────────────
-  function appendMessage(role, content) {
-    const row = document.createElement('div');
-    row.className = `message ${role}`;
-
-    const bubble = document.createElement('div');
-    bubble.className = 'bubble';
-    if (content) bubble.textContent = content;
-
-    row.appendChild(bubble);
-    messagesEl.appendChild(row);
-    scrollToBottom();
-    return bubble;
+  // ── Scroll helper ──────────────────────────────────────────
+  function scroll() {
+    const c = document.getElementById('chat-container');
+    c.scrollTop = c.scrollHeight;
   }
 
-  function appendSpinner() {
-    const row = document.createElement('div');
-    row.className = 'message assistant';
-    row.id = 'spinner-row';
-
-    const bubble = document.createElement('div');
-    bubble.className = 'bubble';
-
-    const spinner = document.createElement('div');
-    spinner.className = 'spinner';
-    for (let i = 0; i < 3; i++) {
-      spinner.appendChild(document.createElement('span'));
-    }
-
-    bubble.appendChild(spinner);
-    row.appendChild(bubble);
-    messagesEl.appendChild(row);
-    scrollToBottom();
-    return row;
+  // ── DOM: user bubble ───────────────────────────────────────
+  function addUser(text) {
+    const row = el('div', 'message user');
+    const b = el('div', 'bubble');
+    b.textContent = text;
+    row.appendChild(b);
+    $messages.appendChild(row);
+    scroll();
   }
 
+  // ── DOM: spinner ───────────────────────────────────────────
+  function addSpinner() {
+    const row = el('div', 'message assistant', 'spinner-row');
+    const b = el('div', 'bubble');
+    const s = el('div', 'spinner');
+    for (let i = 0; i < 3; i++) s.appendChild(document.createElement('span'));
+    b.appendChild(s);
+    row.appendChild(b);
+    $messages.appendChild(row);
+    scroll();
+  }
   function removeSpinner() {
-    const el = document.getElementById('spinner-row');
-    if (el) el.remove();
+    const s = document.getElementById('spinner-row');
+    if (s) s.remove();
   }
 
-  function scrollToBottom() {
-    const container = document.getElementById('chat-container');
-    container.scrollTop = container.scrollHeight;
+  // ── DOM: tiny helper ───────────────────────────────────────
+  function el(tag, cls, id) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (id) e.id = id;
+    return e;
   }
 
-  // ── Structured answer rendering ─────────────────────────────
-  function renderStructuredAnswer(container, text) {
-    const lines = text.split('\n').filter(l => l.trim());
-    if (lines.length === 0) return;
-
-    // First line is the direct answer (Yes/No/It depends)
-    const verdict = document.createElement('div');
-    verdict.className = 'answer-verdict';
-    verdict.textContent = lines[0];
-    container.appendChild(verdict);
-
-    // Collect numbered steps and other lines
-    const steps = [];
-    const other = [];
-    const sopPattern = /^for facility-specific procedures/i;
-
-    for (let i = 1; i < lines.length; i++) {
-      const line = lines[i].trim();
-      if (/^\d+\.\s/.test(line)) {
-        steps.push(line.replace(/^\d+\.\s*/, ''));
-      } else if (sopPattern.test(line)) {
-        // SOP footer handled separately below
-      } else {
-        other.push(line);
-      }
-    }
-
-    // Render any non-step text before steps
-    if (other.length > 0) {
-      const extraText = document.createElement('div');
-      extraText.className = 'answer-text';
-      extraText.textContent = other.join(' ');
-      container.appendChild(extraText);
-    }
-
-    // Render steps as a list
-    if (steps.length > 0) {
-      const ol = document.createElement('ol');
-      ol.className = 'answer-steps';
-      steps.forEach(step => {
-        const li = document.createElement('li');
-        li.textContent = step;
-        ol.appendChild(li);
-      });
-      container.appendChild(ol);
-    }
-
-    // SOP footer
-    const hasSop = lines.some(l => sopPattern.test(l.trim()));
-    if (hasSop) {
-      const footer = document.createElement('div');
-      footer.className = 'answer-sop-footer';
-      footer.textContent = 'For facility-specific procedures (who to notify, where to quarantine, which forms to fill), consult your site SOP.';
-      container.appendChild(footer);
-    }
-  }
-
-  // ── Pipeline steps ──────────────────────────────────────────
-  function renderPipelineSteps(bubble, steps) {
-    if (!steps || steps.length === 0) return;
-    const trail = document.createElement('div');
-    trail.className = 'pipeline-trail';
-    steps.forEach(step => {
-      const span = document.createElement('span');
-      span.className = 'pipeline-step';
-      span.textContent = step;
-      trail.appendChild(span);
-    });
-    bubble.prepend(trail);
-  }
-
-  // ── Source cards ────────────────────────────────────────────
-  function renderSources(bubble, sources) {
-    if (!sources || sources.length === 0) return;
-
-    const wrapper = document.createElement('div');
-    wrapper.className = 'sources-wrapper';
-
-    const label = document.createElement('div');
-    label.className = 'sources-label';
-    label.textContent = `Sources (${sources.length})`;
-    wrapper.appendChild(label);
-
-    sources.forEach((src, idx) => {
-      const details = document.createElement('details');
-      details.className = 'source-card';
-
-      const summary = document.createElement('summary');
-
-      const idxSpan = document.createElement('span');
-      idxSpan.className = 'source-index';
-      idxSpan.textContent = `[SOURCE ${idx + 1}]`;
-
-      const numSpan = document.createElement('span');
-      numSpan.className = 'source-section-num';
-      numSpan.textContent = src.section_number || '§ —';
-
-      const titleSpan = document.createElement('span');
-      titleSpan.className = 'source-title';
-      titleSpan.textContent = src.section_title || '';
-
-      summary.appendChild(idxSpan);
-      summary.appendChild(numSpan);
-      summary.appendChild(titleSpan);
-      details.appendChild(summary);
-
-      if (src.full_text) {
-        const body = document.createElement('div');
-        body.className = 'source-body';
-        const excerpt = src.full_text.length > 600
-          ? src.full_text.slice(0, 600) + '\u2026'
-          : src.full_text;
-        body.textContent = excerpt;
-        details.appendChild(body);
-      }
-
-      wrapper.appendChild(details);
-    });
-
-    bubble.appendChild(wrapper);
-    scrollToBottom();
-  }
-
-  // ── API call (non-streaming, used for session init) ────────
-  async function callChat(message) {
-    const payload = {
-      message,
-      mode: 'qa',
-      filters: {},
-      stream: false,
-    };
-
-    const url = sessionId
-      ? `${API_BASE}/chat/${sessionId}/message`
-      : `${API_BASE}/chat`;
-
+  // ── Streaming API call ─────────────────────────────────────
+  async function stream(message, onPipeline, onToken, onSources) {
+    const url = sessionId ? `${API}/chat/${sessionId}/message` : `${API}/chat`;
     const res = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ message, mode: 'qa', filters: {}, stream: true }),
     });
 
     if (!res.ok) {
-      let detail = `HTTP ${res.status}`;
-      try {
-        const err = await res.json();
-        detail = err.detail || detail;
-      } catch (_) {}
-      throw new Error(detail);
+      let d = `HTTP ${res.status}`;
+      try { d = (await res.json()).detail || d; } catch {}
+      throw new Error(d);
     }
 
-    return res.json();
-  }
-
-  // ── API call (streaming) ──────────────────────────────────
-  async function callChatStream(message, onToken, onPipelineStep) {
-    const payload = {
-      message,
-      mode: 'qa',
-      filters: {},
-      stream: true,
-    };
-
-    const url = sessionId
-      ? `${API_BASE}/chat/${sessionId}/message`
-      : `${API_BASE}/chat`;
-
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-
-    if (!res.ok) {
-      let detail = `HTTP ${res.status}`;
-      try {
-        const err = await res.json();
-        detail = err.detail || detail;
-      } catch (_) {}
-      throw new Error(detail);
-    }
-
-    // Capture session ID from header
     const sid = res.headers.get('X-Session-Id');
     if (sid) sessionId = sid;
 
     const reader = res.body.getReader();
-    const decoder = new TextDecoder();
+    const dec = new TextDecoder();
+    let buf = '';
 
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-      const chunk = decoder.decode(value, { stream: true });
-      // Pipeline steps come as [PIPELINE] lines
-      const lines = chunk.split('\n');
+      buf += dec.decode(value, { stream: true });
+
+      // Process complete lines
+      const lines = buf.split('\n');
+      buf = lines.pop(); // keep incomplete tail
+
       for (const line of lines) {
+        if (!line) continue;
         if (line.startsWith('[PIPELINE] ')) {
-          if (onPipelineStep) onPipelineStep(line.slice(11));
-        } else if (line) {
+          onPipeline(line.slice(11));
+        } else if (line.startsWith('[SOURCES] ')) {
+          try { onSources(JSON.parse(line.slice(10))); } catch {}
+        } else {
+          onToken(line);
+        }
+      }
+    }
+    // Flush remaining buffer — process line by line (same logic as main loop)
+    if (buf.trim()) {
+      for (const line of buf.split('\n')) {
+        if (!line.trim()) continue;
+        if (line.startsWith('[PIPELINE] ')) {
+          onPipeline(line.slice(11));
+        } else if (line.startsWith('[SOURCES] ')) {
+          try { onSources(JSON.parse(line.slice(10))); } catch {}
+        } else {
           onToken(line);
         }
       }
     }
   }
 
-  // ── Submit handler ──────────────────────────────────────────
-  async function submit() {
-    if (isLoading) return;
+  // ── Render: structured answer ──────────────────────────────
+  function renderAnswer(container, raw) {
+    const sourcesRe = /^sources[_ ]used\s*:/i;
+    const lines = raw.split('\n').filter(l => l.trim() && !sourcesRe.test(l.trim()));
+    if (!lines.length) return;
 
-    const text = inputEl.value.trim();
+    const sopRe = /^for facility-specific procedures/i;
+    const stepRe = /^\d+\.\s/;
+
+    // First line = verdict
+    const verdict = el('div', 'verdict');
+    verdict.textContent = lines[0];
+    container.appendChild(verdict);
+
+    const steps = [];
+    const body = [];
+    let hasSop = false;
+
+    for (let i = 1; i < lines.length; i++) {
+      const l = lines[i].trim();
+      if (stepRe.test(l)) steps.push(l.replace(/^\d+\.\s*/, ''));
+      else if (sopRe.test(l)) hasSop = true;
+      else body.push(l);
+    }
+
+    if (body.length) {
+      const wrap = el('div', 'answer-body');
+      body.forEach(line => {
+        const p = el('p');
+        p.textContent = line;
+        wrap.appendChild(p);
+      });
+      container.appendChild(wrap);
+    }
+
+    if (steps.length) {
+      const ol = el('ol', 'steps');
+      steps.forEach(s => { const li = el('li'); li.textContent = s; ol.appendChild(li); });
+      container.appendChild(ol);
+    }
+
+    if (hasSop) {
+      const f = el('div', 'sop-footer');
+      f.textContent = 'For facility-specific procedures (who to notify, where to quarantine, which forms to fill), consult your site SOP.';
+      container.appendChild(f);
+    }
+  }
+
+  // ── Render: source cards ───────────────────────────────────
+  function renderSources(container, sources) {
+    if (!sources || !sources.length) return;
+
+    const wrap = el('div', 'sources');
+    const label = el('div', 'sources-label');
+    label.textContent = `Sources (${sources.length})`;
+    wrap.appendChild(label);
+
+    sources.forEach((src, i) => {
+      const card = el('details', 'src-card');
+      const sum = el('summary');
+
+      const badge = el('span', 'src-badge');
+      badge.textContent = i + 1;
+      const num = el('span', 'src-num');
+      num.textContent = src.section_number || '';
+      const title = el('span', 'src-title');
+      title.textContent = src.section_title || '';
+
+      sum.appendChild(badge);
+      sum.appendChild(num);
+      sum.appendChild(title);
+      card.appendChild(sum);
+
+      if (src.full_text) {
+        const body = el('div', 'src-body');
+        body.textContent = src.full_text.length > 800
+          ? src.full_text.slice(0, 800) + '\u2026'
+          : src.full_text;
+        card.appendChild(body);
+      }
+      wrap.appendChild(card);
+    });
+
+    container.appendChild(wrap);
+    scroll();
+  }
+
+  // ── Send handler ───────────────────────────────────────────
+  async function send() {
+    if (busy) return;
+    const text = $input.value.trim();
     if (!text) return;
 
-    isLoading = true;
-    sendBtn.disabled = true;
-    inputEl.value = '';
-    resizeInput();
+    busy = true;
+    $send.disabled = true;
+    $input.value = '';
+    resize();
 
-    // Remove suggested questions on first submit
-    const suggestions = document.getElementById('suggested-questions');
-    if (suggestions) suggestions.remove();
+    // Remove welcome on first message
+    const welcome = document.getElementById('welcome');
+    if (welcome) welcome.remove();
 
-    appendMessage('user', text);
-
-    // Show spinner while waiting for pipeline + first token
-    const spinnerRow = appendSpinner();
+    addUser(text);
+    addSpinner();
 
     try {
-      removeSpinner();
-
-      const row = document.createElement('div');
-      row.className = 'message assistant';
-      const bubble = document.createElement('div');
-      bubble.className = 'bubble';
+      // Build assistant bubble
+      const row = el('div', 'message assistant');
+      const bubble = el('div', 'bubble');
       row.appendChild(bubble);
-      messagesEl.appendChild(row);
 
-      // Pipeline steps trail (populated during streaming)
-      const trail = document.createElement('div');
-      trail.className = 'pipeline-trail';
+      // Pipeline trail (populated during streaming)
+      const trail = el('div', 'pipeline-trail');
       bubble.appendChild(trail);
 
-      // Text node for streamed content
-      const textNode = document.createElement('span');
-      bubble.appendChild(textNode);
+      // Streaming text area
+      const textSpan = el('span', 'stream-text');
+      bubble.appendChild(textSpan);
 
-      const cursor = document.createElement('span');
-      cursor.className = 'cursor';
+      // Cursor
+      const cursor = el('span', 'cursor');
       bubble.appendChild(cursor);
 
-      scrollToBottom();
-
-      let firstToken = true;
+      let rowShown = false;
       let accumulated = '';
-      await callChatStream(
+      let streamSources = null;
+
+      function showRow() {
+        if (!rowShown) {
+          removeSpinner();
+          $messages.appendChild(row);
+          rowShown = true;
+        }
+      }
+
+      await stream(
         text,
-        (token) => {
-          if (firstToken) {
-            removeSpinner();
-            firstToken = false;
-          }
-          accumulated += token;
-          textNode.textContent = accumulated;
-          scrollToBottom();
-        },
+        // onPipeline — show row on first step, add pill in real-time
         (step) => {
-          const span = document.createElement('span');
-          span.className = 'pipeline-step';
-          span.textContent = step;
-          trail.appendChild(span);
-          scrollToBottom();
+          showRow();
+          // Mark previous step as done (yellow → green)
+          const prev = trail.querySelector('.pip:last-child');
+          if (prev) prev.classList.add('done');
+          // Add new step as active (yellow)
+          const s = el('span', 'pip');
+          s.textContent = step;
+          trail.appendChild(s);
+          scroll();
+        },
+        // onToken
+        (token) => {
+          showRow();
+          // Mark last pipeline step as done when answer starts
+          const last = trail.querySelector('.pip:last-child:not(.done)');
+          if (last) last.classList.add('done');
+          accumulated += token;
+          textSpan.textContent = accumulated;
+          scroll();
+        },
+        // onSources
+        (sources) => {
+          streamSources = sources;
         }
       );
-      // Remove spinner if no tokens came (e.g. empty response)
-      if (firstToken) removeSpinner();
 
+      // Edge case: nothing streamed at all
+      showRow();
+
+      // Remove cursor, replace raw text with structured rendering
       cursor.remove();
+      textSpan.remove();
+      renderAnswer(bubble, accumulated);
 
-      // Replace raw text with structured rendering
-      textNode.remove();
-      renderStructuredAnswer(bubble, accumulated);
-      scrollToBottom();
+      // Show sources below the bubble
+      if (streamSources) {
+        renderSources(row, streamSources);
+      }
+
+      scroll();
 
     } catch (err) {
       removeSpinner();
-      const bubble = appendMessage('assistant', `Error: ${err.message}`);
-      bubble.classList.add('error');
+      const row = el('div', 'message assistant');
+      const b = el('div', 'bubble error');
+      b.textContent = 'Error: ' + err.message;
+      row.appendChild(b);
+      $messages.appendChild(row);
     } finally {
-      isLoading = false;
-      sendBtn.disabled = false;
-      inputEl.focus();
+      busy = false;
+      $send.disabled = false;
+      $input.focus();
     }
   }
 })();
