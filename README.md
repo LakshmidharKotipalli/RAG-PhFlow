@@ -21,20 +21,25 @@ Ask natural-language questions and get synthesised, well-explained answers groun
     │                                                      │
     ▼                                                      ▼
 ┌───────────────────────────────┐          ┌──────────────────────┐
-│        RAG Chain              │          │  llama.cpp server    │
-│  retrieve → fuse → generate   │          │  port 8080           │
-└───┬───────────────────────────┘          │  (any GGUF model)    │
+│        RAG Chain              │          │  LLM Backend         │
+│  rewrite → decompose →        │          │  llama.cpp or Ollama │
+│  retrieve → fuse → generate   │          │  (any GGUF/Ollama    │
+└───┬───────────────────────────┘          │   model)             │
     │                                      └──────────────────────┘
     ▼
 ┌──────────────────────────────────────────────────────────────────┐
 │                    Hybrid Retrieval                              │
 │                                                                  │
 │  Query ──► auto-extract filters (Part/Chapter/date hints)        │
-│        ──► [optional] LLM query rewrite → formal CFR terms       │
-│        ──► BGE embed (w/ prefix) ──► Dense vector ────┐         │
-│        ──► BM25 (fastembed)      ──► Sparse vector ───┤  RRF    │
-│                       (text + table chunks)            └►top-N  │
-│                                     Parent expansion ──► LLM    │
+│        ──► LLM query rewrite → formal CFR terms                  │
+│        ──► LLM multi-query decomposition → 2-3 sub-queries       │
+│            ┌──────────────────────────────────────────┐          │
+│            │  Per sub-query:                          │          │
+│            │  BGE embed (w/ prefix) ──► Dense  ──┐   │          │
+│            │  BM25 (fastembed)      ──► Sparse ──┤RRF│          │
+│            └──────────────────────────────────┘  └───┘          │
+│        ──► Union + dedup by section (best score wins)            │
+│        ──► Parent expansion ──► LLM                              │
 └──────────────────────────────────────────────────────────────────┘
     │
     ▼
@@ -54,7 +59,8 @@ Ask natural-language questions and get synthesised, well-explained answers groun
 | Sparse search | `fastembed` — `Qdrant/bm25` |
 | Vector DB | FAISS (IndexFlatIP, on-disk metadata + BM25 sidecar) |
 | Fusion | Client-side Reciprocal Rank Fusion (RRF, k=60) |
-| LLM | llama.cpp server (any GGUF model) |
+| LLM | llama.cpp or Ollama (configurable via `LLM_BACKEND`) |
+| Query decomposition | LLM-based multi-query split for multi-faceted questions |
 | API | FastAPI + uvicorn |
 | Session store | In-memory dict (default) or Redis (opt-in via `REDIS_URL`) |
 
@@ -96,10 +102,10 @@ RAG-PhFlow/
 │   │   ├── hybrid.py             # dense + sparse RRF → parent expand
 │   │   └── filters.py            # filter predicate builder + auto filter extraction
 │   ├── generation/
-│   │   ├── llm.py                # llama.cpp HTTP client
-│   │   ├── prompts.py            # QA system prompt, query rewrite, adaptive history window
+│   │   ├── llm.py                # LLM client (llama.cpp + Ollama backends)
+│   │   ├── prompts.py            # system prompt (hot-reload), query rewrite, multi-query decomposition
 │   │   ├── citations.py          # context block + source summary formatting
-│   │   └── chain.py              # full RAG pipeline orchestrator
+│   │   └── chain.py              # full RAG pipeline: rewrite → decompose → retrieve → generate
 │   └── api/
 │       ├── main.py               # FastAPI app factory + startup lifespan
 │       ├── schemas.py            # Pydantic request/response models
@@ -147,25 +153,48 @@ conda install -c pytorch faiss-gpu
 ### 2. FAISS Index
 FAISS is fully local and runs inside the Python process. No separate vector database server is required. During ingestion, the index is built and saved locally to `faiss_index/`.
 
-### 3. Start llama.cpp server
+### 3. Start LLM server
+
+**Option A: Ollama (recommended for quick setup)**
+
+```bash
+ollama pull qwen3.5
+# Verify:
+curl http://localhost:11434/api/tags
+```
+
+Set in `.env`:
+```
+LLM_BACKEND=ollama
+OLLAMA_MODEL=qwen3.5
+LLAMA_CPP_URL=http://localhost:11434
+```
+
+**Option B: llama.cpp (for GGUF models)**
 
 ```bash
 llama-server -m /path/to/Llama-3.1-8B-Instruct-Q4_K_M.gguf \
              -c 65536 \
              --port 8080
 
-# Verify it's running:
+# Verify:
 curl http://localhost:8080/health
 ```
 
-Recommended models (from [bartowski on HuggingFace](https://huggingface.co/bartowski)):
+Set in `.env`:
+```
+LLM_BACKEND=llamacpp
+LLAMA_CPP_URL=http://localhost:8080
+```
+
+Recommended GGUF models (from [bartowski on HuggingFace](https://huggingface.co/bartowski)):
 - `Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf` — best balance of speed/quality
 - `Mistral-7B-Instruct-v0.3-Q4_K_M.gguf` — faster, lower memory
 - `Meta-Llama-3.1-70B-Instruct-Q4_K_M.gguf` — highest quality (requires ~40 GB RAM)
 
-> **Context window:** The server must be started with `-c 65536` to match `LLAMA_CPP_NUM_CTX=65536` in `.env`. Using a smaller value silently caps the context.
+> **Context window:** For llama.cpp, start with `-c 65536` to match `LLAMA_CPP_NUM_CTX=65536` in `.env`.
 
-> **Startup health check:** The API warns in the log if llama.cpp is unreachable at startup — it does not hard-fail so you can start the server after the API if needed.
+> **Startup health check:** The API warns in the log if the LLM server is unreachable at startup — it does not hard-fail so you can start the server after the API if needed.
 
 ### 4. Configure environment
 
@@ -289,12 +318,14 @@ All settings are in `.env` (see `.env.example`):
 | `EMBEDDING_DEVICE` | `cuda` | `cpu`, `cuda`, or `mps` (auto-falls back to cpu) |
 | `EMBEDDING_BATCH_SIZE` | `64` | Batch size for ingestion encoding |
 | `FAISS_INDEX_DIR` | `faiss_index` | Directory for FAISS index files |
-| `LLAMA_CPP_URL` | `http://localhost:8080` | llama.cpp server URL |
+| `LLM_BACKEND` | `llamacpp` | `"llamacpp"` or `"ollama"` |
+| `OLLAMA_MODEL` | `qwen3.5` | Ollama model name (only when `LLM_BACKEND=ollama`) |
+| `LLAMA_CPP_URL` | `http://localhost:8080` | LLM server URL (8080 for llama.cpp, 11434 for Ollama) |
 | `LLAMA_CPP_TEMPERATURE` | `0.1` | LLM temperature (low = factual) |
 | `LLAMA_CPP_NUM_CTX` | `65536` | Context window — must match `-c` on llama-server |
 | `LLAMA_CPP_MAX_TOKENS` | `768` | Max response tokens |
-| `INITIAL_RETRIEVAL_K` | `10` | Candidates after RRF fusion |
-| `RETRIEVAL_TOP_N` | `5` | Sections passed to LLM |
+| `INITIAL_RETRIEVAL_K` | `20` | Candidates after RRF fusion |
+| `RETRIEVAL_TOP_N` | `10` | Sections passed to LLM |
 | `PREFETCH_MULTIPLIER` | `2` | Over-fetch factor per search branch before RRF |
 | `ENABLE_QUERY_REWRITE` | `true` | Rewrite colloquial queries to CFR terminology before retrieval |
 | `SCOPE_PART_NUMBERS` | `[210, 211]` | Default CFR parts to scope retrieval when no explicit part filter |

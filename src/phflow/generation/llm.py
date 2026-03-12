@@ -47,6 +47,8 @@ class LlamaCppClient:
         self.frequency_penalty = settings.llama_cpp_frequency_penalty
         self.top_p = settings.llama_cpp_top_p
         self.query_rewrite_tokens = settings.llama_cpp_query_rewrite_tokens
+        self._backend = settings.llm_backend
+        self._ollama_model = settings.ollama_model
         self._client = httpx.AsyncClient(timeout=timeout)
 
     # EOS / role tokens sent to llama.cpp as stop sequences.
@@ -76,6 +78,23 @@ class LlamaCppClient:
     ]
 
     def _payload(self, prompt: str, stream: bool) -> dict:
+        if self._backend == "ollama":
+            return {
+                "model": self._ollama_model,
+                "prompt": prompt,
+                "stream": stream,
+                "think": False,
+                "options": {
+                    "num_predict": self.max_tokens,
+                    "temperature": self.temperature,
+                    "top_p": self.top_p,
+                    "num_ctx": self.num_ctx,
+                    "repeat_penalty": self.repeat_penalty,
+                    "repeat_last_n": self.repeat_last_n,
+                    "frequency_penalty": self.frequency_penalty,
+                    "stop": self._EOS_TOKENS + self._ECHO_STOP_SEQUENCES,
+                },
+            }
         return {
             "prompt": prompt,
             "n_predict": self.max_tokens,
@@ -132,6 +151,16 @@ class LlamaCppClient:
                     changed = True
         return result
 
+    @property
+    def _endpoint(self) -> str:
+        if self._backend == "ollama":
+            return f"{self.base_url}/api/generate"
+        return f"{self.base_url}/completion"
+
+    @property
+    def _response_field(self) -> str:
+        return "response" if self._backend == "ollama" else "content"
+
     async def correct_query(self, prompt: str) -> str:
         """
         Run a short correction pass on the user query.
@@ -139,47 +168,67 @@ class LlamaCppClient:
         Falls back to the original if the corrected result is empty.
         """
         payload = self._payload(prompt, stream=False)
-        payload["n_predict"] = self.query_rewrite_tokens
-        resp = await self._client.post(
-            f"{self.base_url}/completion",
-            json=payload,
-        )
+        if self._backend == "ollama":
+            payload["options"]["num_predict"] = self.query_rewrite_tokens
+        else:
+            payload["n_predict"] = self.query_rewrite_tokens
+        resp = await self._client.post(self._endpoint, json=payload)
         resp.raise_for_status()
-        corrected = self._clean(resp.json().get("content", "")).strip()
+        corrected = self._clean(resp.json().get(self._response_field, "")).strip()
         return corrected or ""   # caller decides fallback
 
     async def generate(self, prompt: str) -> str:
         """Generate a complete response (non-streaming)."""
         resp = await self._client.post(
-            f"{self.base_url}/completion",
+            self._endpoint,
             json=self._payload(prompt, stream=False),
         )
         resp.raise_for_status()
-        return self._clean(resp.json().get("content", ""))
+        return self._clean(resp.json().get(self._response_field, ""))
 
     async def stream(self, prompt: str) -> AsyncIterator[str]:
         """Stream response tokens via SSE."""
         async with self._client.stream(
             "POST",
-            f"{self.base_url}/completion",
+            self._endpoint,
             json=self._payload(prompt, stream=True),
         ) as response:
             response.raise_for_status()
             async for line in response.aiter_lines():
-                if line.startswith("data: "):
+                if self._backend == "ollama":
+                    # Ollama streams JSON objects, one per line
+                    if not line.strip():
+                        continue
                     try:
-                        data = json.loads(line[6:])
+                        data = json.loads(line)
                     except json.JSONDecodeError:
                         continue
-                    token = self._clean(data.get("content", ""))
+                    token = data.get("response", "")
                     if token:
                         yield token
-                    if data.get("stop", False):
+                    if data.get("done", False):
                         break
+                else:
+                    # llama.cpp SSE format: "data: {json}"
+                    if line.startswith("data: "):
+                        try:
+                            data = json.loads(line[6:])
+                        except json.JSONDecodeError:
+                            continue
+                        token = self._clean(data.get("content", ""))
+                        if token:
+                            yield token
+                        if data.get("stop", False):
+                            break
 
     async def health(self) -> bool:
-        """Return True if the llama.cpp server is reachable and ready."""
+        """Return True if the LLM server is reachable and ready."""
         try:
+            if self._backend == "ollama":
+                resp = await self._client.get(
+                    f"{self.base_url}/api/tags", timeout=5,
+                )
+                return resp.status_code == 200
             resp = await self._client.get(f"{self.base_url}/health", timeout=5)
             return resp.json().get("status") == "ok"
         except Exception:

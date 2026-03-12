@@ -21,8 +21,10 @@ class Settings(BaseSettings):
     # FAISS
     faiss_index_dir: str = "faiss_index"
 
-    # llama.cpp server (scheme is added automatically if missing)
+    # LLM server (llama.cpp or ollama; scheme is added automatically if missing)
     llama_cpp_url: str = "http://localhost:8080"
+    llm_backend: str = "llamacpp"  # "llamacpp" or "ollama"
+    ollama_model: str = "qwen3.5"
     llama_cpp_temperature: float = 0.1
     llama_cpp_num_ctx: int = 65536
     llama_cpp_max_tokens: int = 768

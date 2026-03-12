@@ -16,6 +16,7 @@ from phflow.generation.llm import LlamaCppClient
 from phflow.generation.prompts import (
     INSUFFICIENT_MESSAGE,
     build_prompt,
+    build_query_decomposition_prompt,
     build_retrieval_query,
     build_retrieval_rewrite_prompt,
 )
@@ -173,14 +174,35 @@ class RAGChain:
             exclude_removed=True,
         )
 
-        # Stage 3: Retrieval
+        # Stage 3: Query decomposition + Retrieval
+        decomp_prompt = build_query_decomposition_prompt(retrieval_query)
+        decomp_raw = await self.llm.correct_query(decomp_prompt)
+        sub_queries = [q.strip() for q in decomp_raw.strip().splitlines() if q.strip()]
+        if not sub_queries:
+            sub_queries = [retrieval_query]
+        qlog.log("SUB-QUERIES", sub_queries)
+
+        if len(sub_queries) > 1:
+            pipeline_steps.append(f"Decomposed into {len(sub_queries)} sub-queries")
+
+        # Retrieve for each sub-query, union results by section_number
         pipeline_steps.append("Retrieving relevant regulatory sections")
-        sections = self.retriever.search(
-            query=retrieval_query,
-            search_filter=search_filter,
-            expand_to_parent=expand_to_parent,
-            logger=qlog,
-        )
+        all_sections: dict[str, dict] = {}
+        for sq in sub_queries:
+            results = self.retriever.search(
+                query=sq,
+                search_filter=search_filter,
+                expand_to_parent=expand_to_parent,
+                logger=qlog,
+            )
+            for s in results:
+                sn = s.get("section_number", "")
+                if sn not in all_sections or s.get("score", 0) > all_sections[sn].get("score", 0):
+                    all_sections[sn] = s
+
+        # Sort by best score descending, take top_n
+        sections = sorted(all_sections.values(), key=lambda s: s.get("score", 0), reverse=True)
+        sections = sections[:self.retriever.top_n]
 
         qlog.log("SECTIONS PASSED TO LLM", [
             {

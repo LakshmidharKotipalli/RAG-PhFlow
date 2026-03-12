@@ -17,28 +17,27 @@ from pathlib import Path
 from phflow.settings import settings
 
 
-def _load_system_prompt() -> str:
-    """
-    Load the system prompt from the configured file path.
-    Falls back to a minimal inline prompt if the file is missing.
-    """
+def _resolve_prompt_path() -> Path:
+    """Resolve the system prompt file path."""
     path = Path(settings.system_prompt_path)
     if not path.is_absolute():
-        # Resolve relative paths from the project root (3 levels up from this file)
         path = Path(__file__).parents[3] / path
+    return path
+
+
+def get_system_prompt() -> str:
+    """
+    Load the system prompt from disk on every call.
+    Edit the file and the next query picks up the change — no restart needed.
+    """
+    path = _resolve_prompt_path()
     try:
-        content = path.read_text(encoding="utf-8").strip()
-        # Some editors insert a trailing newline or spaces, strip them to be safe
-        return content
+        return path.read_text(encoding="utf-8").strip()
     except FileNotFoundError:
         raise FileNotFoundError(
             f"System prompt file not found: {path}\n"
             "Create it at prompts/system_prompt.txt or set SYSTEM_PROMPT_PATH in .env."
         )
-
-
-# Loaded once at import time.  Restart the API server after editing the file.
-SYSTEM_PROMPT: str = _load_system_prompt()
 
 
 # Number of conversation turns (user + assistant pairs) to include
@@ -116,7 +115,7 @@ def build_prompt(
     """
     parts: list[str] = []
 
-    parts.append(f"INSTRUCTIONS:\n{SYSTEM_PROMPT}")
+    parts.append(f"INSTRUCTIONS:\n{get_system_prompt()}")
 
     if conversation_history and HISTORY_WINDOW > 0:
         # Filter history to remove turns with insufficient content
@@ -184,9 +183,14 @@ def build_retrieval_rewrite_prompt(
         "- damaged seal → compromised container / opened container / container integrity\n"
         "- relabel / re-label → repackaging / labeling / relabeling\n"
         "- inventory count → physical inventory / inventory reconciliation\n"
-        "- ship to customers → distribution / release for distribution\n\n"
+        "- ship to customers → distribution / release for distribution\n"
+        "- material / raw material / ingredient → component / drug product component\n"
+        "- what do I do / what should I do / how to handle → regulatory requirements for / procedures for deviation from\n"
+        "- not stored / not in storage / left out / found outside → deviation from storage requirements / failure to store\n"
+        "- wrong temperature / too hot / too cold / not refrigerated → deviation from temperature storage conditions\n\n"
         "IMPORTANT CONSTRAINTS:\n"
         "- Only substitute operational terms with CFR equivalents from the vocabulary above.\n"
+        "- If the user asks what to do or how to handle a situation, rewrite as a query for the regulatory requirements that apply to that situation.\n"
         "- Do NOT add new concepts, conditions, or terms not present in the original question.\n"
         "- Do NOT rephrase the entire question — only replace non-CFR words with CFR equivalents.\n"
         "- Keep the rewritten query as close to the original structure as possible.\n"
@@ -205,3 +209,27 @@ def build_retrieval_rewrite_prompt(
     parts.append(f"CURRENT QUESTION:\n{current_query}")
     parts.append("Rewritten query:")
     return "\n\n".join(parts)
+
+
+def build_query_decomposition_prompt(rewritten_query: str) -> str:
+    """
+    Build a prompt asking the LLM to decompose a complex regulatory query
+    into 2-3 independent sub-queries that each target a different regulatory concept.
+
+    This improves retrieval coverage for multi-faceted questions where a single
+    query vector can only point toward one region of embedding space.
+    """
+    return (
+        "INSTRUCTIONS:\n"
+        "You are a search query decomposition assistant for an FDA Title 21 CFR regulatory system.\n\n"
+        "Given a regulatory search query, decide if it covers multiple distinct regulatory concepts. "
+        "If it does, decompose it into 2-3 independent sub-queries, each targeting one concept.\n\n"
+        "Rules:\n"
+        "- If the query is simple and targets one concept, return it unchanged on a single line.\n"
+        "- If the query covers multiple concepts, return 2-3 sub-queries, one per line.\n"
+        "- Each sub-query should be a complete, self-contained search query.\n"
+        "- Do NOT add concepts not present in the original query.\n"
+        "- Output ONLY the sub-queries, one per line. No numbering, no explanation.\n\n"
+        f"QUERY:\n{rewritten_query}\n\n"
+        "Sub-queries:"
+    )

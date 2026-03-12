@@ -231,12 +231,22 @@ class HybridRetriever:
         seen_nodes: set[str] = set()
 
         for chunk in top_candidates:
+            # Prefer section_node for grouping; fall back to section_number
+            # if section_node is empty (ingestion bug).
             node = chunk["payload"].get("section_node", "")
-            if node in seen_nodes:
+            if not node:
+                node = chunk["payload"].get("section_number", "")
+            if not node or node in seen_nodes:
                 continue
             seen_nodes.add(node)
 
-            siblings = self.store.scroll_by_node(node)
+            section_node = chunk["payload"].get("section_node", "")
+            if section_node:
+                siblings = self.store.scroll_by_node(section_node)
+            else:
+                siblings = self.store.scroll_by_field(
+                    "section_number", chunk["payload"].get("section_number", "")
+                )
 
             # Concatenate sibling chunks into one full section text.
             # Keep the header from the first chunk only; strip it from

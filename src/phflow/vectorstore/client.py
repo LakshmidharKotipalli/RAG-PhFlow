@@ -269,6 +269,15 @@ class FaissStore:
         results.sort(key=lambda r: r["payload"].get("chunk_index", 0))
         return results
 
+    def scroll_by_field(self, field: str, value: str, limit: int = 100) -> list[dict]:
+        """Fetch all chunks matching a metadata field value, ordered by chunk_index."""
+        results = self.scroll(
+            filter_fn=lambda p: p.get(field) == value,
+            limit=limit,
+        )
+        results.sort(key=lambda r: r["payload"].get("chunk_index", 0))
+        return results
+
     # ── mutations ───────────────────────────────────────────────
 
     def add(

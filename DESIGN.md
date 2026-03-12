@@ -212,24 +212,52 @@ When `ENABLE_QUERY_REWRITE=true` (the default), a short LLM call (`max_tokens=12
 - `"fridge temperature for drugs"` → `"storage temperature requirements for pharmaceutical drug products"`
 - `"sign off on a digital form"` → `"electronic record signature requirements"`
 - `"pallet rejected at dock"` → `"container receipt and acceptance refusal"`
+- `"what do I do, material not in storage"` → `"regulatory requirements for deviation from storage conditions for component"`
 
 **Why rewrite?** The BGE embedding model was trained on formal text. Operational jargon and CFR terms often occupy different regions of the embedding space. The rewrite bridges this gap without retraining the embedding model.
 
+The vocabulary mapping includes two critical categories beyond simple term substitution:
+
+- **Action→requirement flipping:** Questions like "what do I do" or "how should I handle" are rewritten as "regulatory requirements for" — because the CFR defines requirements, not procedures. Specific corrective actions live in facility SOPs, not in the regulations.
+- **Violation→deviation mapping:** Descriptions of something going wrong ("not in storage", "wrong temperature", "left out") are mapped to "deviation from storage requirements" or "deviation from temperature storage conditions" — bridging the gap between describing a problem and finding the regulatory basis for handling it.
+
 The rewrite only affects the retrieval query. The original question is retained for prompt assembly so the LLM sees the user's actual words.
 
-### 6.4 Hybrid Search (Dense + BM25 via RRF)
+### 6.4 Multi-Query Decomposition
 
-Both retrieval signals are computed and fused client-side using Reciprocal Rank Fusion (RRF):
+**File:** `src/phflow/generation/prompts.py` → `build_query_decomposition_prompt()`
+
+After the query rewrite, a second short LLM call decomposes the rewritten query into 2-3 independent sub-queries if the question covers multiple regulatory concepts:
+
+- `"regulatory requirements for deviation from storage conditions for temperature-controlled components"` →
+  - `"regulatory requirements for deviation from storage conditions"`
+  - `"failure to store component requiring cold chain"`
+
+**Why decompose?** A single query vector can only point in one direction in embedding space. A question about "temperature-controlled storage deviations" pulls toward storage sections but misses deviation procedure sections. Each sub-query retrieves independently, and the results are unioned and deduplicated by section_number (best RRF score wins per section).
+
+If the query is simple and targets a single concept, the LLM returns it unchanged on a single line and no decomposition occurs.
+
+### 6.5 Hybrid Search (Dense + BM25 via RRF)
+
+Both retrieval signals are computed per sub-query and fused client-side using Reciprocal Rank Fusion (RRF):
 
 ```
-Query
+Rewritten Query
   │
-  ├─► encode_query(prefix + query)  →  dense vector  ──► FAISS top-20
+  ▼
+Decompose → Sub-query 1, Sub-query 2, ...
   │
-  └─► bm25.query_embed(query)       →  sparse vector ──► BM25 top-20
-                                                              │
-                                              Client-side RRF fusion
-                                                    top-10 candidates
+  ├─► Sub-query 1:
+  │     ├─► encode_query(prefix + sq1) → dense  ──► FAISS top-K
+  │     └─► bm25.query_embed(sq1)      → sparse ──► BM25 top-K
+  │                                         RRF fusion → candidates
+  ├─► Sub-query 2:
+  │     ├─► encode_query(prefix + sq2) → dense  ──► FAISS top-K
+  │     └─► bm25.query_embed(sq2)      → sparse ──► BM25 top-K
+  │                                         RRF fusion → candidates
+  ▼
+Union + dedup by section_number (best score wins)
+  → top-N sections → Parent expansion → LLM
 ```
 
 **Why both dense and BM25?** Dense retrieval excels at semantic similarity but misses exact term matches (e.g. specific CFR section numbers, defined terms). BM25 excels at exact matches but misses paraphrases. Each signal catches what the other misses; fusing them gives consistently higher recall than either alone.
@@ -305,7 +333,7 @@ Prior conversation turns are never concatenated into the retrieval query. Mixing
 
 **File:** `src/phflow/generation/prompts.py`, `src/phflow/generation/citations.py`
 
-The system prompt is loaded from `prompts/system_prompt.txt` at runtime (falls back to an inline default if the file is missing).
+The system prompt is hot-reloaded from `prompts/system_prompt.txt` on every query — edit the file and the next request picks up the change without restarting the server. Falls back to a `FileNotFoundError` if the file is missing.
 
 The assembled prompt has four sections in order:
 
@@ -343,7 +371,7 @@ The system prompt (`prompts/system_prompt.txt`) enforces eight rules:
 | No cross-inference | Do not combine or infer definitions across sentences — if a term isn't explicitly defined, refuse to answer. |
 | Partial context | If CONTEXT partially addresses the question, answer from what is available and explicitly state what is missing. |
 | Operational language | Map warehouse/operational terms to CFR equivalents (pallet→container, leakage→broken seal, etc.). |
-| Answer format | Formal prose paragraphs. No bullets. No CFR section numbers or `[SOURCE N]` labels in the answer body. |
+| Answer format | Structured for warehouse staff: clear Yes/No answer first, then numbered action steps in plain language. No CFR citations in the answer body (added automatically from `SOURCES_USED` declaration by the API). No `[SOURCE N]` labels. |
 | Source declaration | Every response must end with `SOURCES_USED: 1, 3` (1-based source indices). This is mandatory. |
 | Output only | No reasoning, no self-corrections, no deliberation, no repetition. |
 
@@ -357,7 +385,14 @@ The system prompt (`prompts/system_prompt.txt`) enforces eight rules:
 
 ### 10.1 LLM Client
 
-The `LlamaCppClient` posts to the llama.cpp `/completion` endpoint with these key parameters:
+The `LlamaCppClient` supports two backends, selected via `LLM_BACKEND` in `.env`:
+
+| Backend | Endpoint | Response field | Notes |
+|---|---|---|---|
+| `llamacpp` | `POST /completion` | `content` | Native llama.cpp server |
+| `ollama` | `POST /api/generate` | `response` | Ollama; passes `think: false` to disable reasoning in models like Qwen3 |
+
+Both backends receive the same key parameters:
 
 ```json
 {
