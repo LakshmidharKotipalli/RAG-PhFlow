@@ -233,3 +233,39 @@ def build_query_decomposition_prompt(rewritten_query: str) -> str:
         f"QUERY:\n{rewritten_query}\n\n"
         "Sub-queries:"
     )
+
+
+# The scope gate response when a query is off-topic.
+OFF_TOPIC_MESSAGE = (
+    "This system only handles questions about pharmaceutical warehouse "
+    "dock-to-stock operations under FDA 21 CFR Parts 210 and 211. "
+    "Please rephrase your question in that context."
+)
+
+
+def build_scope_gate_prompt(query: str) -> str:
+    """
+    Build a prompt that classifies whether a query is in-scope for
+    pharmaceutical warehouse dock-to-stock operations under 21 CFR 210/211.
+
+    Returns a prompt expecting a single-word YES or NO response.
+    """
+    return (
+        "INSTRUCTIONS:\n"
+        "You are a scope classifier for a pharmaceutical regulatory Q&A system.\n"
+        "The system ONLY answers questions about pharmaceutical warehouse "
+        "dock-to-stock operations — receiving, inspection, sampling, quarantine, "
+        "storage, temperature control, labeling, rejection, release, and related "
+        "GMP requirements under FDA 21 CFR Parts 210 and 211.\n\n"
+        "Decide if the following question is in-scope.\n\n"
+        "In-scope examples: receiving a shipment, temperature excursions, "
+        "quarantine procedures, rejected materials, storage conditions, "
+        "equipment cleaning, component testing, container integrity, "
+        "deviation handling, batch records, quality control unit responsibilities.\n\n"
+        "Out-of-scope examples: weather, cooking recipes, unrelated medical questions, "
+        "general science, non-pharmaceutical regulations, clinical trials, "
+        "drug efficacy, patient treatment.\n\n"
+        "Reply with ONLY one word: YES if in-scope, NO if out-of-scope.\n\n"
+        f"QUESTION:\n{query}\n\n"
+        "Answer:"
+    )

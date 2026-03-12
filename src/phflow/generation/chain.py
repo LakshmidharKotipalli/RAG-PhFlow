@@ -15,10 +15,12 @@ from phflow.generation.citations import format_context_block, source_summary
 from phflow.generation.llm import LlamaCppClient
 from phflow.generation.prompts import (
     INSUFFICIENT_MESSAGE,
+    OFF_TOPIC_MESSAGE,
     build_prompt,
     build_query_decomposition_prompt,
     build_retrieval_query,
     build_retrieval_rewrite_prompt,
+    build_scope_gate_prompt,
 )
 from phflow.retrieval.filters import build_filter, extract_filters_from_query
 from phflow.retrieval.hybrid import HybridRetriever
@@ -136,6 +138,19 @@ class RAGChain:
         pipeline_steps: list[str] = []
 
         clean_query = query
+
+        # Stage 0: Scope gate — reject off-topic queries before burning LLM calls
+        scope_prompt = build_scope_gate_prompt(clean_query)
+        scope_response = (await self.llm.correct_query(scope_prompt)).strip().upper()
+        qlog.log("SCOPE GATE", scope_response)
+
+        if scope_response.startswith("NO"):
+            pipeline_steps.append("Query rejected — out of scope")
+            qlog.log("FINAL ANSWER", OFF_TOPIC_MESSAGE)
+            qlog.save_json()
+            return {"answer": OFF_TOPIC_MESSAGE, "sources": [], "pipeline_steps": pipeline_steps}
+
+        pipeline_steps.append("Query in scope")
 
         # Stage 1: Query rewrite
         if settings.enable_query_rewrite:
