@@ -20,6 +20,8 @@ from phflow.generation.llm import LlamaCppClient
 from phflow.generation.prompts import (
     INSUFFICIENT_MESSAGE,
     OFF_TOPIC_MESSAGE,
+    VAGUE_QUERY_MESSAGE,
+    _MIN_QUERY_WORDS,
     build_prompt,
     build_query_decomposition_prompt,
     build_retrieval_query,
@@ -162,12 +164,31 @@ class RAGChain:
                 qlog.log("CACHE", "HIT (stream)")
                 qlog.save_json()
 
+                import json as _json_c
+                _cached_sources = cached.get("sources", [])
+
                 async def _stream_cached():
                     yield "[PIPELINE] Semantic cache hit\n"
                     yield cached["answer"]
+                    if _cached_sources:
+                        yield "\n[SOURCES] " + _json_c.dumps(_cached_sources) + "\n"
                 return _stream_cached()
 
         clean_query = query
+
+        # ── Vague query guard (skip full pipeline for 1-2 word queries) ──
+        word_count = len(clean_query.split())
+        if word_count < _MIN_QUERY_WORDS:
+            pipeline_steps.append("Query too vague — asking for clarification")
+            qlog.log("FINAL ANSWER", VAGUE_QUERY_MESSAGE)
+            qlog.save_json()
+            if stream:
+                async def _stream_vague():
+                    for step in pipeline_steps:
+                        yield f"[PIPELINE] {step}\n"
+                    yield VAGUE_QUERY_MESSAGE
+                return _stream_vague()
+            return {"answer": VAGUE_QUERY_MESSAGE, "sources": [], "pipeline_steps": pipeline_steps}
 
         # Stage 0+1: Combined scope gate + query rewrite (single LLM call)
         scope_rewrite_prompt = build_scope_and_rewrite_prompt(clean_query)
@@ -305,12 +326,22 @@ class RAGChain:
         if stream:
             pipeline_steps.append("Generating answer")
             qlog.save_json()
+            _sections = sections  # capture for closure
 
             async def _stream_with_status():
+                import json as _json
                 for step in pipeline_steps:
                     yield f"[PIPELINE] {step}\n"
+                accumulated: list[str] = []
                 async for token in self.llm.stream(prompt):
+                    accumulated.append(token)
                     yield token
+                # Post-stream: resolve sources and send as trailing JSON line
+                raw = "".join(accumulated)
+                all_src = source_summary(_sections)
+                _, used = _parse_used_sources(raw, all_src)
+                sources_to_send = used if used else all_src
+                yield "\n[SOURCES] " + _json.dumps(sources_to_send) + "\n"
 
             return _stream_with_status()
 

@@ -51,6 +51,18 @@ INSUFFICIENT_MESSAGE = (
     "to answer this question."
 )
 
+# Prompt shown when query is too vague to produce a useful answer.
+VAGUE_QUERY_MESSAGE = (
+    "Your question is quite broad. Could you be more specific? For example:\n"
+    "- What are the temperature storage requirements for components?\n"
+    "- What should I do if a shipment arrives with a broken seal?\n"
+    "- Who is responsible for approving received materials?"
+)
+
+# Minimum word count for a query to be considered specific enough.
+# "What is X?" (4 words) is too vague; "What are the requirements for X?" (6) is fine.
+_MIN_QUERY_WORDS = 5
+
 # Detect back-references in the current query that require prior conversation context
 _REFERENCE_RE = re.compile(
     r"\b(that|it|its|same|above|those|this|the\s+section|the\s+requirement|"
@@ -256,14 +268,18 @@ def build_scope_and_rewrite_prompt(query: str) -> str:
         "You are a scope classifier AND query rewriter for a pharmaceutical "
         "regulatory search system used by warehouse and manufacturing staff.\n\n"
         "STEP 1 — SCOPE CHECK:\n"
-        "The system ONLY answers questions about pharmaceutical warehouse "
-        "dock-to-stock operations — receiving, inspection, sampling, quarantine, "
-        "storage, temperature control, labeling, rejection, release, and related "
-        "GMP requirements under FDA 21 CFR Parts 210 and 211.\n\n"
+        "The system answers questions about pharmaceutical GMP requirements "
+        "under FDA 21 CFR Parts 210 and 211.  This covers the ENTIRE manufacturing "
+        "and warehouse lifecycle: receiving, inspection, sampling, quarantine, "
+        "storage, temperature control, labeling, rejection, release, production, "
+        "process controls, packaging, distribution, shipping, and record-keeping.\n\n"
         "In-scope: receiving shipments, temperature excursions, quarantine, "
-        "rejected materials, storage conditions, equipment cleaning, component testing, "
-        "container integrity, deviation handling, batch records, quality control unit.\n"
-        "Out-of-scope: weather, cooking, general medical, general science, "
+        "rejected materials, storage conditions, equipment cleaning/maintenance, "
+        "component testing, container integrity, deviation handling, batch records, "
+        "production/process controls, written procedures, reprocessing, packaging, "
+        "distribution records, shipping, expiration dating, quality control unit, "
+        "personnel training, building/facility requirements, calibration.\n"
+        "Out-of-scope: weather, cooking, general medical advice, general science, "
         "non-pharmaceutical regulations, clinical trials, drug efficacy, patient treatment.\n\n"
         "STEP 2 — REWRITE (only if in-scope):\n"
         "Rewrite the question into formal CFR regulatory terminology.\n\n"
