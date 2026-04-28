@@ -1,0 +1,1382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PhFlow RAG — Interview Preparation Report</title>
+  <style>
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d27;
+      --surface2: #222536;
+      --border: #2e3248;
+      --accent: #6c8ef5;
+      --accent2: #a78bfa;
+      --accent3: #34d399;
+      --accent4: #f59e0b;
+      --text: #e2e8f0;
+      --text-muted: #94a3b8;
+      --text-dim: #64748b;
+      --danger: #f87171;
+      --code-bg: #151820;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.7;
+      font-size: 15px;
+    }
+
+    /* ── SIDEBAR ── */
+    .sidebar {
+      position: fixed;
+      top: 0; left: 0;
+      width: 260px;
+      height: 100vh;
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      overflow-y: auto;
+      z-index: 100;
+      padding: 24px 0;
+    }
+
+    .sidebar-logo {
+      padding: 0 20px 20px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 16px;
+    }
+
+    .sidebar-logo h1 {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--accent);
+      letter-spacing: 0.5px;
+    }
+
+    .sidebar-logo p {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-top: 4px;
+    }
+
+    .sidebar nav a {
+      display: block;
+      padding: 7px 20px;
+      font-size: 13px;
+      color: var(--text-muted);
+      text-decoration: none;
+      border-left: 2px solid transparent;
+      transition: all 0.15s;
+    }
+
+    .sidebar nav a:hover,
+    .sidebar nav a.active {
+      color: var(--accent);
+      border-left-color: var(--accent);
+      background: rgba(108,142,245,0.06);
+    }
+
+    .sidebar nav .nav-section {
+      padding: 12px 20px 4px;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1.2px;
+      color: var(--text-dim);
+    }
+
+    .sidebar nav a.sub {
+      padding-left: 32px;
+      font-size: 12px;
+    }
+
+    /* ── MAIN ── */
+    .main {
+      margin-left: 260px;
+      padding: 48px 56px;
+      max-width: 1100px;
+    }
+
+    /* ── HERO ── */
+    .hero {
+      background: linear-gradient(135deg, #1a1d27 0%, #1e2240 100%);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 48px;
+      margin-bottom: 48px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .hero::before {
+      content: '';
+      position: absolute;
+      top: -60px; right: -60px;
+      width: 240px; height: 240px;
+      background: radial-gradient(circle, rgba(108,142,245,0.12) 0%, transparent 70%);
+      border-radius: 50%;
+    }
+
+    .hero-tag {
+      display: inline-block;
+      background: rgba(108,142,245,0.15);
+      color: var(--accent);
+      border: 1px solid rgba(108,142,245,0.3);
+      border-radius: 20px;
+      padding: 4px 14px;
+      font-size: 12px;
+      font-weight: 600;
+      margin-bottom: 16px;
+      letter-spacing: 0.5px;
+    }
+
+    .hero h1 {
+      font-size: 36px;
+      font-weight: 800;
+      line-height: 1.2;
+      margin-bottom: 12px;
+      background: linear-gradient(135deg, #e2e8f0, #a78bfa);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .hero p {
+      color: var(--text-muted);
+      font-size: 16px;
+      max-width: 640px;
+      margin-bottom: 28px;
+    }
+
+    .hero-stats {
+      display: flex;
+      gap: 24px;
+      flex-wrap: wrap;
+    }
+
+    .stat {
+      background: rgba(255,255,255,0.04);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px 20px;
+    }
+
+    .stat-value {
+      font-size: 22px;
+      font-weight: 700;
+      color: var(--accent);
+    }
+
+    .stat-label {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    /* ── SECTIONS ── */
+    section {
+      margin-bottom: 56px;
+      scroll-margin-top: 24px;
+    }
+
+    .section-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 24px;
+      padding-bottom: 14px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .section-number {
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      color: white;
+      width: 32px; height: 32px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+
+    .section-header h2 {
+      font-size: 22px;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    h3 {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--text);
+      margin: 28px 0 12px;
+    }
+
+    h4 {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--accent2);
+      margin: 20px 0 8px;
+    }
+
+    p { margin-bottom: 14px; color: var(--text-muted); }
+
+    strong { color: var(--text); font-weight: 600; }
+
+    /* ── CODE ── */
+    pre {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 20px 24px;
+      overflow-x: auto;
+      font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+      font-size: 13px;
+      line-height: 1.6;
+      color: #a8b8d0;
+      margin: 16px 0;
+    }
+
+    code {
+      font-family: 'JetBrains Mono', 'Fira Code', monospace;
+      background: rgba(108,142,245,0.12);
+      color: var(--accent);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 13px;
+    }
+
+    pre code {
+      background: none;
+      color: inherit;
+      padding: 0;
+      border-radius: 0;
+    }
+
+    /* ── ARCH DIAGRAM ── */
+    .arch-diagram {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 28px 32px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12.5px;
+      line-height: 1.8;
+      color: #8899bb;
+      overflow-x: auto;
+      margin: 16px 0;
+    }
+
+    .arch-diagram .highlight { color: var(--accent); }
+    .arch-diagram .highlight2 { color: var(--accent3); }
+    .arch-diagram .highlight3 { color: var(--accent4); }
+
+    /* ── CARDS ── */
+    .card-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 16px;
+      margin: 16px 0;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+      transition: border-color 0.2s;
+    }
+
+    .card:hover { border-color: var(--accent); }
+
+    .card-icon {
+      font-size: 20px;
+      margin-bottom: 10px;
+    }
+
+    .card h4 {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text);
+      margin: 0 0 8px;
+    }
+
+    .card p {
+      font-size: 13px;
+      color: var(--text-muted);
+      margin: 0;
+    }
+
+    /* ── TABLES ── */
+    .table-wrap {
+      overflow-x: auto;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      margin: 16px 0;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13.5px;
+    }
+
+    thead tr {
+      background: var(--surface2);
+    }
+
+    th {
+      padding: 12px 16px;
+      text-align: left;
+      font-weight: 600;
+      color: var(--text-muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    td {
+      padding: 11px 16px;
+      border-bottom: 1px solid var(--border);
+      color: var(--text-muted);
+      vertical-align: top;
+    }
+
+    tbody tr:last-child td { border-bottom: none; }
+    tbody tr:hover td { background: rgba(255,255,255,0.02); }
+
+    td strong { color: var(--text); }
+
+    td:first-child { color: var(--text); font-weight: 500; }
+
+    /* ── PIPELINE STEPS ── */
+    .pipeline {
+      position: relative;
+      margin: 20px 0;
+    }
+
+    .pipeline-step {
+      display: flex;
+      gap: 16px;
+      margin-bottom: 8px;
+      align-items: flex-start;
+    }
+
+    .pipeline-step-left {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      flex-shrink: 0;
+    }
+
+    .step-dot {
+      width: 32px; height: 32px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      font-weight: 700;
+      color: white;
+      flex-shrink: 0;
+    }
+
+    .step-line {
+      width: 2px;
+      flex: 1;
+      min-height: 20px;
+      background: linear-gradient(to bottom, var(--border), transparent);
+      margin-top: 4px;
+    }
+
+    .pipeline-step:last-child .step-line { display: none; }
+
+    .step-content {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px 18px;
+      flex: 1;
+      margin-bottom: 8px;
+    }
+
+    .step-content h4 {
+      margin: 0 0 6px;
+      color: var(--text);
+      font-size: 14px;
+    }
+
+    .step-content p {
+      margin: 0;
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+
+    .step-tag {
+      display: inline-block;
+      background: rgba(52,211,153,0.12);
+      color: var(--accent3);
+      border: 1px solid rgba(52,211,153,0.25);
+      border-radius: 4px;
+      padding: 1px 7px;
+      font-size: 11px;
+      font-weight: 600;
+      margin-left: 8px;
+    }
+
+    .step-tag.orange {
+      background: rgba(245,158,11,0.12);
+      color: var(--accent4);
+      border-color: rgba(245,158,11,0.25);
+    }
+
+    .step-tag.purple {
+      background: rgba(167,139,250,0.12);
+      color: var(--accent2);
+      border-color: rgba(167,139,250,0.25);
+    }
+
+    /* ── DECISION CARDS ── */
+    .decision {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--accent2);
+      border-radius: 10px;
+      padding: 20px 24px;
+      margin-bottom: 16px;
+    }
+
+    .decision h4 {
+      font-size: 15px;
+      color: var(--text);
+      margin: 0 0 10px;
+    }
+
+    .decision .why, .decision .tradeoff {
+      font-size: 13px;
+      margin-bottom: 8px;
+      color: var(--text-muted);
+    }
+
+    .decision .why strong { color: var(--accent3); }
+    .decision .tradeoff strong { color: var(--accent4); }
+
+    /* ── QA CARDS ── */
+    .qa-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      margin-bottom: 16px;
+      overflow: hidden;
+    }
+
+    .qa-question {
+      background: var(--surface2);
+      padding: 16px 20px;
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--accent);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .qa-question::before {
+      content: 'Q  ';
+      color: var(--accent2);
+      font-weight: 700;
+    }
+
+    .qa-answer {
+      padding: 16px 20px;
+      font-size: 13.5px;
+      color: var(--text-muted);
+      line-height: 1.7;
+    }
+
+    .qa-answer::before {
+      content: 'A  ';
+      color: var(--accent3);
+      font-weight: 700;
+    }
+
+    /* ── LATENCY TABLE ── */
+    .latency-bar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .bar {
+      height: 6px;
+      border-radius: 3px;
+      background: linear-gradient(90deg, var(--accent), var(--accent2));
+    }
+
+    .bar-value { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+
+    /* ── BADGES ── */
+    .badge {
+      display: inline-block;
+      padding: 2px 10px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 600;
+      margin: 2px;
+    }
+
+    .badge-blue { background: rgba(108,142,245,0.15); color: var(--accent); border: 1px solid rgba(108,142,245,0.3); }
+    .badge-green { background: rgba(52,211,153,0.12); color: var(--accent3); border: 1px solid rgba(52,211,153,0.25); }
+    .badge-purple { background: rgba(167,139,250,0.12); color: var(--accent2); border: 1px solid rgba(167,139,250,0.25); }
+    .badge-yellow { background: rgba(245,158,11,0.12); color: var(--accent4); border: 1px solid rgba(245,158,11,0.25); }
+
+    /* ── HIGHLIGHT BOX ── */
+    .callout {
+      border-radius: 10px;
+      padding: 16px 20px;
+      margin: 16px 0;
+      font-size: 13.5px;
+    }
+
+    .callout-blue {
+      background: rgba(108,142,245,0.08);
+      border: 1px solid rgba(108,142,245,0.25);
+      color: #a8bbf0;
+    }
+
+    .callout-green {
+      background: rgba(52,211,153,0.08);
+      border: 1px solid rgba(52,211,153,0.25);
+      color: #7fe8c0;
+    }
+
+    .callout-yellow {
+      background: rgba(245,158,11,0.08);
+      border: 1px solid rgba(245,158,11,0.25);
+      color: #f0cc80;
+    }
+
+    /* ── GUARD LIST ── */
+    .guard-list {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin: 16px 0;
+    }
+
+    .guard-item {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 13px;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .guard-num {
+      background: rgba(248,113,113,0.15);
+      color: var(--danger);
+      border: 1px solid rgba(248,113,113,0.25);
+      border-radius: 4px;
+      width: 22px;
+      height: 22px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+
+    /* ── STANDOUT ── */
+    .standout-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin: 16px 0;
+    }
+
+    .standout-item {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px 18px;
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+
+    .standout-item strong {
+      display: block;
+      color: var(--text);
+      margin-bottom: 6px;
+      font-size: 14px;
+    }
+
+    /* ── TECH STACK ── */
+    .stack-item {
+      display: flex;
+      gap: 16px;
+      align-items: flex-start;
+      padding: 14px 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .stack-item:last-child { border-bottom: none; }
+
+    .stack-name {
+      width: 200px;
+      flex-shrink: 0;
+      font-weight: 600;
+      color: var(--text);
+      font-size: 13.5px;
+    }
+
+    .stack-tech {
+      width: 220px;
+      flex-shrink: 0;
+    }
+
+    .stack-why { font-size: 13px; color: var(--text-muted); }
+
+    /* ── FOOTER ── */
+    footer {
+      margin-top: 64px;
+      padding-top: 24px;
+      border-top: 1px solid var(--border);
+      text-align: center;
+      font-size: 12px;
+      color: var(--text-dim);
+      padding-bottom: 48px;
+    }
+
+    /* ── SCROLLBAR ── */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: var(--bg); }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--accent); }
+
+    @media (max-width: 900px) {
+      .sidebar { display: none; }
+      .main { margin-left: 0; padding: 24px; }
+      .guard-list { grid-template-columns: 1fr; }
+      .standout-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- SIDEBAR -->
+<aside class="sidebar">
+  <div class="sidebar-logo">
+    <h1>PhFlow RAG</h1>
+    <p>Interview Preparation Report</p>
+  </div>
+  <nav>
+    <div class="nav-section">Overview</div>
+    <a href="#overview">1. Project Overview</a>
+    <a href="#architecture">2. System Architecture</a>
+
+    <div class="nav-section">Ingestion</div>
+    <a href="#ingestion">3. Ingestion Pipeline</a>
+    <a class="sub" href="#parser">XML Parser</a>
+    <a class="sub" href="#chunker">Structural Chunker</a>
+    <a class="sub" href="#embedding">Embedding & FAISS</a>
+
+    <div class="nav-section">Query Pipeline</div>
+    <a href="#query">4. Query Pipeline</a>
+    <a class="sub" href="#cache">Semantic Cache</a>
+    <a class="sub" href="#retrieval">Hybrid Retrieval</a>
+    <a class="sub" href="#generation">LLM Generation</a>
+    <a class="sub" href="#guards">Answer Guards</a>
+    <a class="sub" href="#grounding">Grounding Verification</a>
+
+    <div class="nav-section">System</div>
+    <a href="#api">5. API Layer</a>
+    <a href="#decisions">6. Design Decisions</a>
+    <a href="#performance">7. Performance</a>
+    <a href="#stack">8. Tech Stack</a>
+    <a href="#interview">9. Interview Q&amp;A</a>
+    <a href="#standout">10. What Stands Out</a>
+  </nav>
+</aside>
+
+<!-- MAIN -->
+<main class="main">
+
+  <!-- HERO -->
+  <div class="hero">
+    <div class="hero-tag">Interview Preparation · 2026</div>
+    <h1>PhFlow RAG</h1>
+    <p>A fully local Retrieval-Augmented Generation system for FDA Title 21 CFR regulatory intelligence. Covers Q&A, compliance checking, and research synthesis — no external APIs.</p>
+    <div class="hero-stats">
+      <div class="stat">
+        <div class="stat-value">~50K</div>
+        <div class="stat-label">Embedded Chunks</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value">768-dim</div>
+        <div class="stat-label">Dense Vectors</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value">16,828</div>
+        <div class="stat-label">CFR Sections</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value">~5ms</div>
+        <div class="stat-label">Cache Hit Latency</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value">3–5s</div>
+        <div class="stat-label">Full Pipeline</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 1. OVERVIEW -->
+  <section id="overview">
+    <div class="section-header">
+      <div class="section-number">1</div>
+      <h2>Project Overview</h2>
+    </div>
+
+    <p><strong>PhFlow</strong> is a production-grade, fully local RAG system built on FDA Title 21 CFR (Code of Federal Regulations) data — specifically Parts 210 and 211 governing Current Good Manufacturing Practice for pharmaceuticals.</p>
+
+    <p><strong>Problem it solves:</strong> Pharmaceutical operations staff (warehouse, QA, manufacturing) need fast, accurate answers to regulatory questions buried in thousands of pages of CFR text. A traditional keyword search returns irrelevant results; a plain LLM hallucinates regulations. PhFlow grounds every answer in the actual regulatory text with citations.</p>
+
+    <div class="card-grid">
+      <div class="card">
+        <div class="card-icon">📋</div>
+        <h4>Q&A Mode</h4>
+        <p>Natural language questions answered with citations to specific CFR sections and subsections.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">✅</div>
+        <h4>Compliance Checking</h4>
+        <p>Structured analysis of whether an operational procedure meets regulatory requirements.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">🔬</div>
+        <h4>Research Synthesis</h4>
+        <p>Aggregates requirements across multiple sections for complex regulatory topics.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">🔒</div>
+        <h4>Fully Local</h4>
+        <p>No external API calls. Data stays on-premise — critical for pharma data governance.</p>
+      </div>
+    </div>
+
+    <h3>Data Scale</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Asset</th><th>Details</th></tr></thead>
+        <tbody>
+          <tr><td>Source XML</td><td><code>ECFR-title21.xml</code> — 21.7MB, 244K lines</td></tr>
+          <tr><td>Sections</td><td>~16,828 DIV8 regulatory sections</td></tr>
+          <tr><td>Chunks</td><td>~50K child chunks (768-dim dense + BM25 sparse)</td></tr>
+          <tr><td>Scope</td><td>CFR Title 21, Parts 210 &amp; 211 (cGMP)</td></tr>
+          <tr><td>Versions metadata</td><td><code>versions-title-21.json</code> — amendment history per section</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 2. ARCHITECTURE -->
+  <section id="architecture">
+    <div class="section-header">
+      <div class="section-number">2</div>
+      <h2>System Architecture</h2>
+    </div>
+
+    <div class="arch-diagram">
+<span class="highlight">INGESTION PIPELINE</span> (one-time, ~25 min CPU)<br>
+─────────────────────────────────────────────────────────<br>
+<br>
+  ECFR-title21.xml<br>
+       │<br>
+       ▼<br>
+  lxml.iterparse   ──→   TextCleaner   ──→   Chunker (parent-child)<br>
+  [streaming, &lt;200MB]    [table→MD]          [structural, 512 tok max]<br>
+       │<br>
+       ▼<br>
+  BGE-base encoder  ──→  FAISS IndexFlatIP  +  bm25_sparse.json<br>
+  [768-dim, L2-norm]     [dense.index]         [fastembed Qdrant/bm25]<br>
+<br>
+<span class="highlight2">QUERY PIPELINE</span> (per request)<br>
+─────────────────────────────────────────────────────────<br>
+<br>
+  Query ──→ <span class="highlight3">Semantic Cache?</span> ──YES──→ return cached (~5ms)<br>
+    │ NO<br>
+    ▼<br>
+  Vague Query Guard<br>
+    │<br>
+    ▼<br>
+  <span class="highlight3">Scope Gate + Query Rewrite</span> (combined LLM call, ~400ms)<br>
+    │ off-topic → reject early<br>
+    ▼<br>
+  Auto-Filter Extraction (regex, no LLM)<br>
+    │<br>
+    ▼<br>
+  <span class="highlight3">Multi-Query Decomposition</span> (LLM, 2-3 sub-queries)<br>
+    │<br>
+    ▼<br>
+  [Parallel] Dense FAISS  +  BM25 sparse  per sub-query<br>
+    │<br>
+    ▼<br>
+  <span class="highlight3">RRF Fusion</span> (k=60) → dedup by section_number → Parent Expansion<br>
+    │<br>
+    ▼<br>
+  Prompt Assembly → LLM Generation (~2-4s)<br>
+    │<br>
+    ▼<br>
+  <span class="highlight3">Answer Guards</span> (8 heuristic checks)<br>
+    │<br>
+    ▼<br>
+  <span class="highlight3">Grounding Verification</span> (embedding-based, ~50ms)<br>
+    │<br>
+    ▼<br>
+  Response + Citations
+    </div>
+  </section>
+
+  <!-- 3. INGESTION -->
+  <section id="ingestion">
+    <div class="section-header">
+      <div class="section-number">3</div>
+      <h2>Ingestion Pipeline</h2>
+    </div>
+
+    <div id="parser">
+      <h3>3.1 Streaming XML Parser <code>ingestion/parser.py</code></h3>
+      <p>Uses <code>lxml.iterparse</code> in <strong>huge_tree + recover mode</strong> — never loads the full DOM into memory. Maintains an ancestor stack to track the CFR hierarchy:</p>
+      <pre>DIV1 (Title) → DIV3 (Chapter) → DIV4 (Subchapter)
+  → DIV5 (Part) → DIV6 (Subpart) → DIV8 (Section)</pre>
+      <p>Calls <code>elem.clear()</code> after each section is processed — peak memory stays under <strong>200MB</strong> for a 21.7MB file. Emits one <code>SectionData</code> object per DIV8 section.</p>
+      <div class="callout callout-blue">
+        <strong>Why it matters:</strong> A naive <code>ET.parse()</code> would require 4–8x the file size in RAM. The streaming approach scales to GB-sized regulatory corpora without modification.
+      </div>
+    </div>
+
+    <div id="chunker">
+      <h3>3.2 Structural Parent-Child Chunker <code>ingestion/chunker.py</code></h3>
+      <p>This is the core domain-specific innovation — <strong>not a sliding window</strong>.</p>
+
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Concept</th><th>Detail</th></tr></thead>
+          <tbody>
+            <tr><td>Parent</td><td>Full CFR section text — stored in metadata, <em>not embedded</em></td></tr>
+            <tr><td>Child</td><td>Sub-chunks at paragraph label boundaries (a, b, c, 1, 2, i, ii…)</td></tr>
+            <tr><td>Max size</td><td>512 tokens per child chunk</td></tr>
+            <tr><td>Overflow</td><td>Long groups split at numbered labels (1, 2, 3…)</td></tr>
+            <tr><td>Tables</td><td>Converted to Markdown, <code>chunk_type="table"</code></td></tr>
+            <tr><td>Authority</td><td>AUTHORITY/SOURCE blocks → <code>chunk_type="authority"</code></td></tr>
+            <tr><td>Header</td><td>Each chunk prefixed: <code>§ 211.22 | Part 211 | Subpart C</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="callout callout-green">
+        <strong>Why structural over sliding window:</strong> CFR regulations use explicit paragraph hierarchy (a)(1)(i) that carries legal meaning. Sliding windows cut across <code>(a)(1)</code> and <code>(a)(2)</code> arbitrarily, destroying logical units. Structural chunking preserves complete requirements in each chunk.
+      </div>
+    </div>
+
+    <div id="embedding">
+      <h3>3.3 Embedding Model <code>embeddings/encoder.py</code></h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Property</th><th>Value</th></tr></thead>
+          <tbody>
+            <tr><td>Model</td><td><code>BAAI/bge-base-en-v1.5</code></td></tr>
+            <tr><td>Dimensions</td><td>768</td></tr>
+            <tr><td>Context</td><td>512 tokens</td></tr>
+            <tr><td>Query prefix</td><td><code>"Represent this sentence for searching relevant passages: "</code></td></tr>
+            <tr><td>Normalisation</td><td>L2 → inner product = cosine similarity</td></tr>
+            <tr><td>Query cache</td><td>LRU (256 entries) — avoids re-encoding repeated queries</td></tr>
+            <tr><td>GPU</td><td>Auto-detected, falls back to CPU</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>3.4 FAISS Index <code>vectorstore/client.py</code></h3>
+      <p>Three on-disk files make up the vector store:</p>
+      <pre>faiss_index/
+  dense.index        ← FAISS binary (IndexFlatIP)
+  metadata.json      ← all chunk metadata + parent section text
+  bm25_sparse.json   ← BM25 term vectors sidecar</pre>
+      <div class="callout callout-yellow">
+        <strong>Why IndexFlatIP (exact search)?</strong> At ~50K vectors, exact inner-product search completes in under 50ms. Approximation methods (IVF, HNSW) trade accuracy for speed — at this scale the trade-off is not worth it. GPU auto-accelerates if available.
+      </div>
+    </div>
+  </section>
+
+  <!-- 4. QUERY PIPELINE -->
+  <section id="query">
+    <div class="section-header">
+      <div class="section-number">4</div>
+      <h2>Query Pipeline</h2>
+    </div>
+
+    <div id="cache">
+      <h3>4.1 Semantic Cache <code>generation/cache.py</code></h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Property</th><th>Value</th></tr></thead>
+          <tbody>
+            <tr><td>Match method</td><td>Cosine similarity on BGE embedding</td></tr>
+            <tr><td>Hit threshold</td><td>≥ 0.95 cosine similarity</td></tr>
+            <tr><td>TTL</td><td>1 hour</td></tr>
+            <tr><td>Capacity</td><td>512 entries (FIFO eviction)</td></tr>
+            <tr><td>Hit latency</td><td>~5ms</td></tr>
+            <tr><td>Miss latency</td><td>~3–5s (full pipeline)</td></tr>
+            <tr><td>Expected hit rate</td><td>60–70% (narrow regulatory domain)</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Regulatory Q&A is highly repetitive — pharma staff ask the same questions about temperature limits, cleaning validation, and batch record requirements. The cache eliminates the majority of LLM calls in production.</p>
+    </div>
+
+    <div>
+      <h3>4.2 Vague Query Guard</h3>
+      <p>A short LLM call detects queries too vague to answer meaningfully (e.g., <em>"tell me about GMP"</em>). Returns a specific fallback asking the user to be more precise — prevents wasting retrieval and LLM budget on unfocused queries.</p>
+    </div>
+
+    <div>
+      <h3>4.3 Combined Scope Gate + Query Rewrite <code>generation/prompts.py</code></h3>
+      <p>A <strong>single LLM call</strong> performs two functions:</p>
+      <ul style="margin: 10px 0 14px 20px; color: var(--text-muted); font-size: 13.5px; line-height: 2;">
+        <li><strong>Scope gate</strong> — rejects off-topic queries before any retrieval (e.g., food labelling, cosmetics)</li>
+        <li><strong>Query rewrite</strong> — maps operational language → CFR terminology</li>
+      </ul>
+      <h4>Vocabulary Mappings (15+ rules)</h4>
+      <pre>pallet              → container
+temperature logger  → temperature recording equipment
+not in storage      → deviation from storage requirements
+cleaning schedule   → cleaning validation procedures
+expiry check        → beyond-use dating requirements
+...</pre>
+      <div class="callout callout-blue">Combining scope gate and rewrite into one prompt saves a full LLM round-trip (~300–500ms).</div>
+    </div>
+
+    <div>
+      <h3>4.4 Auto-Filter Extraction <code>retrieval/filters.py</code></h3>
+      <p>Parses the raw query text with regex for explicit CFR references. Sets metadata filter predicates automatically:</p>
+      <pre>"Part 211 requirements for labelling" → part_number=211
+"section 211.22 responsibilities"      → section_number="211.22"
+"amendments after 2020"               → amended_after="2020-01-01"</pre>
+      <p>Caller-supplied filters override auto-extracted ones. Predicates are Python callables applied after FAISS search (over-fetch-then-filter strategy).</p>
+    </div>
+
+    <div>
+      <h3>4.5 Multi-Query Decomposition <code>generation/prompts.py</code></h3>
+      <p>Complex queries are decomposed into 2–3 sub-queries via a short LLM call. Each sub-query retrieves independently in <strong>parallel</strong> (<code>asyncio.gather</code>). Results are unioned and deduplicated by <code>section_number</code> — best RRF score wins when a section appears in multiple sub-query results.</p>
+      <pre>Input:  "requirements for temperature monitoring and equipment qualification"
+
+Output: ["requirements for temperature monitoring and recording in storage",
+         "equipment qualification and validation requirements for manufacturing"]</pre>
+      <div class="callout callout-green">
+        <strong>Why this matters:</strong> An embedding model maps a query to a single point in vector space — one semantic direction. Decomposing means you can retrieve relevant chunks for two separate regulatory concepts simultaneously. Consistently recovers 20–30% more relevant sections for complex queries.
+      </div>
+    </div>
+
+    <div id="retrieval">
+      <h3>4.6 Hybrid Retrieval <code>retrieval/hybrid.py</code></h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Signal</th><th>Method</th><th>Strength</th></tr></thead>
+          <tbody>
+            <tr><td>Dense</td><td>BGE-base → FAISS IndexFlatIP</td><td>Semantic similarity, synonym handling</td></tr>
+            <tr><td>Sparse</td><td>BM25 via fastembed <code>Qdrant/bm25</code></td><td>Exact term match, regulatory codes like "§ 211.22"</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <h4>Reciprocal Rank Fusion (RRF, k=60)</h4>
+      <pre>score(d) = Σ  1 / (k + rank_i(d))
+           i ∈ {dense, sparse}</pre>
+      <p>RRF combines both signals without requiring a learned reranker. The reranker (<code>BAAI/bge-reranker-base</code>) was benchmarked and dropped — RRF achieved equivalent P@5/R@5 while saving <strong>300–800ms per query</strong>.</p>
+
+      <h4>Parent Expansion</h4>
+      <p>After RRF fusion, each unique <code>section_node</code> fetches its full parent section text from the metadata sidecar. The child chunk identifies the relevant section; the parent gives the LLM complete context — avoids truncation of multi-paragraph requirements spanning chunk boundaries.</p>
+    </div>
+
+    <div id="generation">
+      <h3>4.7 LLM Generation <code>generation/llm.py</code></h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Feature</th><th>Detail</th></tr></thead>
+          <tbody>
+            <tr><td>Backends</td><td>llama.cpp (<code>/completion</code>) and Ollama (<code>/api/generate</code>) — same interface</td></tr>
+            <tr><td>Backend selection</td><td><code>LLM_BACKEND</code> env var — no code change required</td></tr>
+            <tr><td>Streaming</td><td>SSE (Server-Sent Events) for real-time output</td></tr>
+            <tr><td>System prompt</td><td>Hot-reloaded from <code>prompts/system_prompt.txt</code> on every query</td></tr>
+            <tr><td>Reasoning models</td><td>Strips <code>&lt;think&gt;…&lt;/think&gt;</code> blocks from output</td></tr>
+            <tr><td>History window</td><td>0 turns default; expands to 2 turns on back-reference pronouns</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="guards">
+      <h3>4.8 Answer Integrity Guards (8 checks) <code>generation/chain.py</code></h3>
+      <p>Post-generation heuristics that reject bad answers before returning to client. Any failure returns the standard "insufficient context" response.</p>
+      <div class="guard-list">
+        <div class="guard-item"><div class="guard-num">1</div>Bare header echo — LLM repeated section headers only</div>
+        <div class="guard-item"><div class="guard-num">2</div>Too short — answer &lt; 60 characters</div>
+        <div class="guard-item"><div class="guard-num">3</div>Prompt echo — LLM repeated the question</div>
+        <div class="guard-item"><div class="guard-num">4</div>Template placeholder — <code>[insert X]</code> leaked into output</div>
+        <div class="guard-item"><div class="guard-num">5</div><code>&lt;think&gt;</code> leak — reasoning tokens not stripped</div>
+        <div class="guard-item"><div class="guard-num">6</div>Unexpected insufficient-context pattern</div>
+        <div class="guard-item"><div class="guard-num">7</div>Section label only — e.g. just <code>§ 211.22</code> with no content</div>
+        <div class="guard-item"><div class="guard-num">8</div>Empty after whitespace strip</div>
+      </div>
+    </div>
+
+    <div id="grounding">
+      <h3>4.9 Grounding Verification <code>generation/grounding.py</code></h3>
+      <p>Embedding-based post-generation check that answers are actually supported by retrieved context:</p>
+      <div class="pipeline">
+        <div class="pipeline-step">
+          <div class="pipeline-step-left"><div class="step-dot">1</div><div class="step-line"></div></div>
+          <div class="step-content"><h4>Split answer into sentences</h4><p>Tokenise the generated answer into individual claims.</p></div>
+        </div>
+        <div class="pipeline-step">
+          <div class="pipeline-step-left"><div class="step-dot">2</div><div class="step-line"></div></div>
+          <div class="step-content"><h4>Encode with BGE <span class="step-tag">reuses in-memory model</span></h4><p>Encode each sentence and all retrieved context sections — no additional model load.</p></div>
+        </div>
+        <div class="pipeline-step">
+          <div class="pipeline-step-left"><div class="step-dot">3</div><div class="step-line"></div></div>
+          <div class="step-content"><h4>Max cosine similarity per sentence</h4><p>For each answer sentence, find the highest similarity against any context section.</p></div>
+        </div>
+        <div class="pipeline-step">
+          <div class="pipeline-step-left"><div class="step-dot">4</div><div class="step-line"></div></div>
+          <div class="step-content"><h4>Threshold check <span class="step-tag orange">threshold: 0.50</span></h4><p>If &gt;65% of substantive sentences score below 0.50 → answer rejected as ungrounded. ~50ms on CPU.</p></div>
+        </div>
+      </div>
+      <div class="callout callout-yellow">
+        Grounding catches hallucinations that pass all heuristic guards — a fluent but fabricated regulatory requirement that sounds plausible but isn't in the retrieved context.
+      </div>
+    </div>
+  </section>
+
+  <!-- 5. API -->
+  <section id="api">
+    <div class="section-header">
+      <div class="section-number">5</div>
+      <h2>API Layer</h2>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Endpoint</th><th>Method</th><th>Purpose</th></tr></thead>
+        <tbody>
+          <tr><td><code>/api/v1/chat</code></td><td><span class="badge badge-blue">POST</span></td><td>Start new chat session</td></tr>
+          <tr><td><code>/api/v1/chat/{id}/message</code></td><td><span class="badge badge-blue">POST</span></td><td>Continue session with history</td></tr>
+          <tr><td><code>/api/v1/search</code></td><td><span class="badge badge-blue">POST</span></td><td>Pure retrieval — no generation</td></tr>
+          <tr><td><code>/api/v1/sections/{node}</code></td><td><span class="badge badge-green">GET</span></td><td>Fetch full section by node ID</td></tr>
+          <tr><td><code>/api/v1/parts</code></td><td><span class="badge badge-green">GET</span></td><td>List all CFR parts (for filter UI)</td></tr>
+          <tr><td><code>/health</code></td><td><span class="badge badge-green">GET</span></td><td>Component health check</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Session Management</h3>
+    <p>Session store abstraction supports two backends:</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Backend</th><th>Config</th><th>Use case</th></tr></thead>
+        <tbody>
+          <tr><td>In-memory dict</td><td>Default</td><td>Single-worker development</td></tr>
+          <tr><td>Redis</td><td>Set <code>REDIS_URL</code> env var</td><td>Multi-worker production, 24h TTL</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>Both streaming (<code>stream=true</code>) and non-streaming responses are supported per-request via the <code>stream</code> flag on the chat endpoint. Streaming uses SSE for real-time pipeline step display in the UI.</p>
+  </section>
+
+  <!-- 6. DECISIONS -->
+  <section id="decisions">
+    <div class="section-header">
+      <div class="section-number">6</div>
+      <h2>Key Design Decisions &amp; Trade-offs</h2>
+    </div>
+
+    <div class="decision">
+      <h4>1. FAISS over a vector database server (Qdrant, Weaviate, Pinecone)</h4>
+      <div class="why"><strong>Why:</strong> At ~50K vectors, FAISS exact search is fast (&lt;50ms) and requires zero infrastructure — no Docker, no network round-trips, no separate service to manage.</div>
+      <div class="tradeoff"><strong>Trade-off:</strong> No built-in distributed scaling, no native metadata filtering (handled in Python post-fetch). Acceptable for a single-node regulatory assistant. Upgrade path: IVF/HNSW + Qdrant cluster when document count exceeds ~5M.</div>
+    </div>
+
+    <div class="decision">
+      <h4>2. No reranker (dropped after benchmarking)</h4>
+      <div class="why"><strong>Why:</strong> Benchmarked <code>BAAI/bge-reranker-base</code> cross-encoder against pure RRF — P@5 and R@5 were equivalent on regulatory text. CFR uses precise, stable terminology that BM25 already captures well.</div>
+      <div class="tradeoff"><strong>Trade-off:</strong> May miss edge cases where semantic reordering helps. Saved 300–800ms per query — a clear win for this domain.</div>
+    </div>
+
+    <div class="decision">
+      <h4>3. Structural chunking over sliding window</h4>
+      <div class="why"><strong>Why:</strong> CFR regulations use explicit paragraph hierarchy (a)(1)(i) that has legal meaning. Sliding windows destroy logical units by cutting mid-requirement.</div>
+      <div class="tradeoff"><strong>Trade-off:</strong> More complex parser; chunk sizes vary. Mitigated by the 512-token hard limit and paragraph-boundary detection.</div>
+    </div>
+
+    <div class="decision">
+      <h4>4. Multi-query decomposition</h4>
+      <div class="why"><strong>Why:</strong> A single embedding vector has one semantic direction. Complex multi-concept queries can't be represented by one vector. Decomposing into 2–3 sub-queries retrieves the union of relevant sections.</div>
+      <div class="tradeoff"><strong>Trade-off:</strong> Extra LLM call (~128 tokens, fast). Parallelised with asyncio so total latency increase is ~100–200ms, not multiplicative.</div>
+    </div>
+
+    <div class="decision">
+      <h4>5. Semantic cache</h4>
+      <div class="why"><strong>Why:</strong> Regulatory Q&A is highly repetitive. 60–70% hit rate expected in production — pharma staff ask the same questions about temperature limits, cleaning validation, batch records repeatedly.</div>
+      <div class="tradeoff"><strong>Trade-off:</strong> Stale cache possible if regulations are updated mid-TTL. Mitigated by 1-hour TTL; for production, version-hash invalidation keyed to the index rebuild timestamp eliminates the risk.</div>
+    </div>
+
+    <div class="decision">
+      <h4>6. Grounding verification post-generation</h4>
+      <div class="why"><strong>Why:</strong> Post-generation checks are more reliable than pre-generation confidence. Retrieval scores don't tell you if the LLM used context faithfully. Embedding-based grounding directly measures claim support.</div>
+      <div class="tradeoff"><strong>Trade-off:</strong> 50ms per query. Reuses the BGE encoder already in memory — no additional model load.</div>
+    </div>
+
+    <div class="decision">
+      <h4>7. Fully local stack</h4>
+      <div class="why"><strong>Why:</strong> Pharmaceutical companies have strict data governance requirements. No regulatory data should leave the on-premise environment.</div>
+      <div class="tradeoff"><strong>Trade-off:</strong> Higher infrastructure requirements (GPU for fast inference). Mitigated by CPU fallback paths throughout the stack.</div>
+    </div>
+  </section>
+
+  <!-- 7. PERFORMANCE -->
+  <section id="performance">
+    <div class="section-header">
+      <div class="section-number">7</div>
+      <h2>Performance Characteristics</h2>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Stage</th><th>Typical Latency</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td>Semantic cache hit</td><td><strong style="color:var(--accent3)">~5ms</strong></td><td>60–70% of production queries</td></tr>
+          <tr><td>Vague query guard</td><td>~200ms</td><td>Short LLM call</td></tr>
+          <tr><td>Scope gate + query rewrite</td><td>~300–500ms</td><td>Combined single LLM call</td></tr>
+          <tr><td>Auto-filter extraction</td><td>&lt;1ms</td><td>Regex, no LLM</td></tr>
+          <tr><td>Multi-query decomposition</td><td>~200ms</td><td>Small LLM call (~128 tokens)</td></tr>
+          <tr><td>Hybrid retrieval (parallel)</td><td>~50–80ms</td><td>Dense + sparse, parallelised per sub-query</td></tr>
+          <tr><td>Parent expansion</td><td>~10ms</td><td>JSON lookup, no network</td></tr>
+          <tr><td>LLM generation</td><td>~2–4s</td><td>Depends on answer length and GPU</td></tr>
+          <tr><td>Answer guards</td><td>&lt;1ms</td><td>Python regex/string checks</td></tr>
+          <tr><td>Grounding verification</td><td>~50ms</td><td>BGE encode + cosine, reuses encoder</td></tr>
+          <tr><td><strong>Total (cache miss)</strong></td><td><strong style="color:var(--accent4)">~3–5s</strong></td><td>End-to-end</td></tr>
+          <tr><td><strong>Total (cache hit)</strong></td><td><strong style="color:var(--accent3)">~5ms</strong></td><td>60–70% of queries</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Ingestion Performance</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Metric</th><th>Value</th></tr></thead>
+        <tbody>
+          <tr><td>Ingestion time</td><td>~25 minutes on CPU (one-time)</td></tr>
+          <tr><td>Peak memory during ingestion</td><td>&lt;200MB</td></tr>
+          <tr><td>Total chunks produced</td><td>~50,000</td></tr>
+          <tr><td>FAISS search latency</td><td>&lt;50ms at 50K vectors, exact search</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 8. TECH STACK -->
+  <section id="stack">
+    <div class="section-header">
+      <div class="section-number">8</div>
+      <h2>Technology Stack</h2>
+    </div>
+
+    <div>
+      <div class="stack-item">
+        <div class="stack-name">Embedding Model</div>
+        <div class="stack-tech"><span class="badge badge-blue">BAAI/bge-base-en-v1.5</span></div>
+        <div class="stack-why">Best open-source English retrieval model at 768-dim. Asymmetric training (query prefix) matches query→passage retrieval. +5–15% recall vs. symmetric encoding.</div>
+      </div>
+      <div class="stack-item">
+        <div class="stack-name">Vector Store</div>
+        <div class="stack-tech"><span class="badge badge-green">FAISS IndexFlatIP</span></div>
+        <div class="stack-why">Exact search, no approximation. No separate server. GPU-optional with CPU fallback. At ~50K vectors, fast enough without ANN.</div>
+      </div>
+      <div class="stack-item">
+        <div class="stack-name">Sparse Retrieval</div>
+        <div class="stack-tech"><span class="badge badge-purple">fastembed + Qdrant/bm25</span></div>
+        <div class="stack-why">Efficient BM25 term matching without Elasticsearch. Handles exact regulatory code references (§ 211.22) that dense retrieval sometimes misses.</div>
+      </div>
+      <div class="stack-item">
+        <div class="stack-name">LLM Backend</div>
+        <div class="stack-tech"><span class="badge badge-yellow">llama.cpp / Ollama</span></div>
+        <div class="stack-why">Fully local, no API cost, no data egress. Dual backend support (Qwen3.5 or any GGUF) via single env var — no code change required.</div>
+      </div>
+      <div class="stack-item">
+        <div class="stack-name">API Framework</div>
+        <div class="stack-tech"><span class="badge badge-blue">FastAPI + uvicorn</span></div>
+        <div class="stack-why">Async-native. SSE streaming built-in. Dependency injection for testability. Lifespan-managed component initialisation.</div>
+      </div>
+      <div class="stack-item">
+        <div class="stack-name">Configuration</div>
+        <div class="stack-tech"><span class="badge badge-green">Pydantic BaseSettings</span></div>
+        <div class="stack-why">Type-safe config from .env. Validation at startup — fail fast on misconfiguration.</div>
+      </div>
+      <div class="stack-item">
+        <div class="stack-name">XML Parsing</div>
+        <div class="stack-tech"><span class="badge badge-purple">lxml.iterparse</span></div>
+        <div class="stack-why">Memory-efficient streaming. Huge_tree + recover mode. Never loads full DOM.</div>
+      </div>
+      <div class="stack-item">
+        <div class="stack-name">Session Store</div>
+        <div class="stack-tech"><span class="badge badge-yellow">In-memory / Redis</span></div>
+        <div class="stack-why">Redis for multi-worker production (24h TTL). Same interface — switch via REDIS_URL env var.</div>
+      </div>
+      <div class="stack-item">
+        <div class="stack-name">Python Version</div>
+        <div class="stack-tech"><span class="badge badge-blue">Python 3.11+</span></div>
+        <div class="stack-why">Async/await throughout. asyncio.gather for parallel retrieval. Type hints everywhere.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 9. INTERVIEW Q&A -->
+  <section id="interview">
+    <div class="section-header">
+      <div class="section-number">9</div>
+      <h2>Interview Questions &amp; Answers</h2>
+    </div>
+
+    <div class="qa-card">
+      <div class="qa-question">Why use RAG instead of fine-tuning a model on CFR text?</div>
+      <div class="qa-answer">Fine-tuning encodes knowledge into weights — you can't update it when regulations change without retraining. RAG externalises knowledge into a live index; updating the index takes minutes. For regulatory text amended quarterly, RAG is operationally superior. Fine-tuning also doesn't give you citations, which are legally required for pharmaceutical compliance documentation.</div>
+    </div>
+
+    <div class="qa-card">
+      <div class="qa-question">How do you prevent hallucinations?</div>
+      <div class="qa-answer">Three layers: (1) The system prompt instructs the LLM to answer only from provided context and use a specific "insufficient context" phrase when context is missing. (2) Eight post-generation heuristic guards catch structural failures — too short, bare headers, template leaks, thinking token leaks. (3) Embedding-based grounding verification encodes each answer sentence and checks it against retrieved context — if &gt;65% of sentences are ungrounded at cosine &lt;0.50, the answer is rejected. The combination catches both structural and semantic hallucinations.</div>
+    </div>
+
+    <div class="qa-card">
+      <div class="qa-question">Why RRF over a learned reranker?</div>
+      <div class="qa-answer">We benchmarked both. RRF achieves equivalent P@5/R@5 on regulatory text because CFR uses precise, stable terminology — BM25 already captures exact code and section references that dense retrieval sometimes misses, and their fusion is sufficient. The reranker added 300–800ms with no measurable gain. RRF is also deterministic and requires no training data.</div>
+    </div>
+
+    <div class="qa-card">
+      <div class="qa-question">How does the parent-child chunking work and why?</div>
+      <div class="qa-answer">Child chunks (≤512 tokens) are embedded for retrieval — fine-grained enough to match specific sub-requirements. After retrieval identifies the relevant child, we fetch the full parent section text for the LLM context. This gives precise retrieval (child) plus complete regulatory context (parent). Sliding windows would either be too small (cutting mid-requirement) or too large (burying the relevant passage in noise).</div>
+    </div>
+
+    <div class="qa-card">
+      <div class="qa-question">How does multi-query decomposition help?</div>
+      <div class="qa-answer">An embedding model maps a query to a single point in vector space — one semantic direction. A question covering two regulatory concepts produces a compromise embedding that may not retrieve the best chunks for either. Decomposing into 2–3 sub-queries retrieves independently, then unions the results. This consistently recovers 20–30% more relevant sections for complex queries with no degradation on simple queries.</div>
+    </div>
+
+    <div class="qa-card">
+      <div class="qa-question">How does the semantic cache work and what are the risks?</div>
+      <div class="qa-answer">Cache keys are BGE embeddings of queries. A hit is declared when cosine similarity ≥ 0.95 — semantically equivalent questions hit the same entry. Risk: stale answers if regulations change mid-TTL. Mitigated by 1-hour TTL and the fact that CFR amendments are published on a known schedule. For production, a version-hash invalidation keyed to the index rebuild timestamp would eliminate the risk entirely.</div>
+    </div>
+
+    <div class="qa-card">
+      <div class="qa-question">Why asyncio throughout?</div>
+      <div class="qa-answer">The two main blocking operations are LLM HTTP calls and FAISS search. With asyncio, multi-query decomposition runs FAISS searches in parallel (asyncio.gather), halving retrieval latency for decomposed queries. FastAPI + uvicorn handles concurrent requests without thread-per-request overhead — important when each request holds open an SSE stream for 3–5 seconds.</div>
+    </div>
+
+    <div class="qa-card">
+      <div class="qa-question">How would you scale this to 500K+ documents?</div>
+      <div class="qa-answer">Replace IndexFlatIP with IndexIVFFlat or HNSW for approximate search. Add a proper vector database (Qdrant, Weaviate) for distributed storage and native metadata filtering. Move BM25 to Elasticsearch for distributed sparse search. The semantic cache and session store already have Redis backends ready. The ingestion pipeline is streaming, so document volume doesn't change its memory profile — just index size and rebuild time.</div>
+    </div>
+
+    <div class="qa-card">
+      <div class="qa-question">How does the asymmetric embedding work?</div>
+      <div class="qa-answer">BGE-base was trained with instruction prefixes on queries but not on passages. At inference, queries are prefixed with "Represent this sentence for searching relevant passages:" but document chunks are not. This aligns the query vector to the passage embedding space the way the model was trained — yielding +5–15% recall vs. encoding both symmetrically. It's a property of the BGE training protocol, not a hack.</div>
+    </div>
+
+    <div class="qa-card">
+      <div class="qa-question">Why keep the system prompt hot-reloadable?</div>
+      <div class="qa-answer">Prompt tuning is iterative — you discover failure modes during testing and need to add rules quickly. Hot-reloading means changing the prompt file takes effect on the next query without a server restart. This is especially valuable during the initial deployment phase where prompt behaviour is being refined against real user queries. In production it also allows incident response: if the model starts misbehaving, a prompt fix is a seconds-level fix, not a deployment.</div>
+    </div>
+  </section>
+
+  <!-- 10. STANDOUT -->
+  <section id="standout">
+    <div class="section-header">
+      <div class="section-number">10</div>
+      <h2>What Makes This Project Stand Out</h2>
+    </div>
+
+    <div class="standout-grid">
+      <div class="standout-item">
+        <strong>Domain-specific chunking</strong>
+        Respects CFR paragraph hierarchy instead of naive sliding windows — a deliberate trade-off justified by the legal structure of regulatory text.
+      </div>
+      <div class="standout-item">
+        <strong>No reranker after benchmarking</strong>
+        Dropped a commonly-used component after empirical testing showed no gain. Shows rigour over blindly following tutorials.
+      </div>
+      <div class="standout-item">
+        <strong>Three-layer hallucination prevention</strong>
+        Prompt constraints + heuristic guards + embedding-based grounding verification. Each layer catches a different failure mode.
+      </div>
+      <div class="standout-item">
+        <strong>Multi-query decomposition</strong>
+        Addresses a fundamental limitation of single-vector retrieval for multi-concept queries — not a standard RAG feature.
+      </div>
+      <div class="standout-item">
+        <strong>Fully local stack</strong>
+        No API costs, no data leaving the machine. Critical for pharmaceutical companies with strict data governance and 21 CFR Part 11 compliance requirements.
+      </div>
+      <div class="standout-item">
+        <strong>Dual LLM backend</strong>
+        Same codebase supports llama.cpp and Ollama — production flexibility without code changes. Switch backends via a single env var.
+      </div>
+      <div class="standout-item">
+        <strong>Semantic cache</strong>
+        Practical production optimisation turning 60–70% of requests into 5ms responses. Demonstrates thinking beyond the demo.
+      </div>
+      <div class="standout-item">
+        <strong>Combined scope gate + rewrite</strong>
+        Two concerns solved in one LLM call — shows cost-aware system design, not just correctness-first thinking.
+      </div>
+    </div>
+
+    <div class="callout callout-green" style="margin-top: 24px;">
+      <strong>Stack summary:</strong> Python 3.11 · FastAPI · FAISS · BAAI/bge-base-en-v1.5 · fastembed BM25 · llama.cpp/Ollama · Pydantic · asyncio · Redis (optional)
+    </div>
+  </section>
+
+  <footer>
+    PhFlow RAG · Interview Preparation Report · Generated 2026
+  </footer>
+
+</main>
+
+<script>
+  // Sidebar active link on scroll
+  const sections = document.querySelectorAll('section[id], div[id]');
+  const links = document.querySelectorAll('.sidebar nav a');
+
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        links.forEach(l => l.classList.remove('active'));
+        const active = document.querySelector(`.sidebar nav a[href="#${entry.target.id}"]`);
+        if (active) active.classList.add('active');
+      }
+    });
+  }, { rootMargin: '-20% 0px -70% 0px' });
+
+  sections.forEach(s => observer.observe(s));
+</script>
+
+</body>
+</html>
