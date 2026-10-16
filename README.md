@@ -359,7 +359,3 @@ ruff check src/
 ```
 
 ---
-
-## License
-
-This project is for research and educational use. The regulatory data (ECFR Title 21) is published by the U.S. Government Printing Office and is in the public domain.
